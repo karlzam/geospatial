@@ -3,7 +3,6 @@ import geemap
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-from pyproj import Proj
 from pyproj import CRS
 
 from osgeo import gdal
