@@ -78,8 +78,8 @@ global downloadStartDay, downloadEndDay
 # These integer variables define the date ranges for the downloads, in YYYYMMDD format.
 # NOTE: downloadEndDay is EXCLUSIVE.
 # These variables are used for VIIRS LAADS DAAC downloads.
-downloadStartDay  = 20210729
-downloadEndDay    = 20210729
+downloadStartDay  = 20180724
+downloadEndDay    = 20180728
 
 # This string variable specifies the LAADS DAAC authentication token to use for the download.
 # Used for VIIRS data from LAADS DAAC.
@@ -100,17 +100,18 @@ dirGFAS = r"C:\Users\kzammit\Documents\VIIRS-data-"
 # This string specifies the Administrative Area region name (such as "Canada") to restrict
 # the downloaded VIIRS data to.
 # Used for VIIRS data from LAADS DAAC.
-regions = "Canada"
+regions = "UnitedStates"
 
 # This string specifies the VIIRS product name to download (such as VNP02IMG, VNP02MOD, VNP03IMG or
 # VNP14IMG).
-product = "VNP02IMG"
+#product = "VNP02IMG"
 #product = "VNP14IMG"
+product = "VNP09GA.002"
 
 # These string variables specify temporal ranges.
 # Used for VIIRS L2 Earthdata downloads.
-#start_date_l2 = '2021-04'
-#end_date_l2 = '2021-10'
+start_date_l2 = '2018-06'
+end_date_l2 = '2018-07'
 #start_date_l2 = '2021-07-14'
 #end_date_l2 = '2021-07-14'
 
@@ -118,19 +119,19 @@ product = "VNP02IMG"
 # upper_right_lon, upper_right_lat). Used for VIIRS L2 Earthdata downloads.
 # Let's define one for Canada.
 # Used for VIIRS L2 Earthdata downloads.
-# bounding_box = (-142.5, 41.9, -51.6, 69.5)
+bounding_box = (-123.0, 39.0, -121.0, 41.0)
 
 # This Boolean specifies whether to use cloud-hosted data or not.
 # Used for VIIRS L2 Earthdata downloads.
-# cloud_hosted = True
+cloud_hosted = True
 
 # This string specifies an identifier for the VIIRS data type to be downloaded.
 # Used for VIIRS L2 Earthdata downloads.
-# doi = '10.5067/VIIRS/VNP14IMG.002'
+doi = '10.5067/VIIRS/VNP09GA.002'
 
 # This int specifies the number of download threads to use to download the data.
 # Used for VIIRS L2 Earthdata downloads.
-# threads = 1
+threads = 1
 
 
 ###################################################################################################
