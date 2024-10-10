@@ -35,6 +35,7 @@ import matplotlib.patches as mpatches
 import time
 import seaborn as sns
 import xarray
+import openpyxl
 
 from glob import glob
 import earthpy as et
@@ -71,19 +72,14 @@ ee.Authenticate()
 # Variables
 ###################################################################################################
 
+plume_excel_sheet = pd.read_excel(r'C:\Users\kzammit\Documents\Plumes\plume-metadata.xlsx')
+
+plot_path = r'C:\Users\kzammit\Documents\Plumes\plots'
+
 ### FIRMS Related Variables ###
 
 # Map key
 FIRMS_map_key = 'e865c77bb60984ab516517cd4cdadea0'
-
-# Coords of hotspots to pull, will also be used as bounding box for satellite imagery in GEE
-coords = '-123,39,-121,41'
-
-# Number of days surrounding date to pull hotspots
-VIIRS_no_days = '1'
-
-# Date to pull hotspots
-VIIRS_date = '2018-07-26'
 
 ### GEE Related Variables ###
 
@@ -93,17 +89,35 @@ gee_proj = 'karlzam'
 # For other users: you need to share this folder with your credential for google API for google cloud
 google_drive_folder = 'GEE_Exports'
 
-start_date = '2018-07-25'
+# Where satellite data will be exported to
+download_path = r'C:\Users\kzammit\Documents\Plumes\downloaded-tifs'
 
-end_date = '2018-07-27'
+# Before running this script:
+# Create a service key for your google cloud project and download the .json to your local machine
+creds_file = r'C:\Users\kzammit\Documents\google-drive-API-key\karlzam-d3258a83d6cb.json'
 
-download_path = r'C:\Users\kzammit\Documents\downloaded-files'
-
-creds_file = r'C:\Users\kzammit\Documents\karlzam-d3258a83d6cb.json'
 
 ###################################################################################################
 # Methods
 ###################################################################################################
+
+def get_info(r):
+    # Filled in by sheet
+
+    # Coords of hotspots to pull, will also be used as bounding box for satellite imagery in GEE
+    coords = str(r['coord-0']) + ',' + str(r['coord-1']) + ',' + str(r['coord-2']) + ',' + str(r['coord-3'])
+
+    # Number of days surrounding date to pull hotspots
+    VIIRS_no_days = int(r['viirs-no-days'])
+
+    # Date to pull hotspots
+    VIIRS_date = str(r['viirs-date']).split(' ')[0]
+
+    # Start and end dates for filtering in google
+    start_date = str(r['gee-start-date']).split(' ')[0]
+    end_date = str(r['gee-end-date']).split(' ')[0]
+
+    return coords, VIIRS_no_days, VIIRS_date, start_date, end_date
 
 def obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
     """
@@ -138,7 +152,7 @@ def obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
     return gdf_SNPP
 
 
-def download_gee_data(coords, start_date, end_date, google_drive_folder):
+def download_gee_data(coords, start_date, end_date, google_drive_folder, landsat_flag):
     """
 
     :param coords:
@@ -148,8 +162,10 @@ def download_gee_data(coords, start_date, end_date, google_drive_folder):
     :return:
     """
 
-    roi = ee.Geometry.Rectangle([int(coords.split(',')[0]), int(coords.split(',')[1]),
-                                 int(coords.split(',')[2]), int(coords.split(',')[3])])
+    # TODO: Update the image collection to grab the closest date image to the plume date instead of taking the median
+
+    roi = ee.Geometry.Rectangle([float(coords.split(',')[0]), float(coords.split(',')[1]),
+                                 float(coords.split(',')[2]), float(coords.split(',')[3])])
 
     ## viirs
     # moderate resolution bands: 'M5', 'M4', 'M3'
@@ -175,18 +191,20 @@ def download_gee_data(coords, start_date, end_date, google_drive_folder):
 
     ## landsat
 
-    landsat = ee.ImageCollection("LANDSAT/LC08/C02/T1_TOA").filterDate(start_date, end_date).filterBounds(roi)
+    if landsat_flag == 1:
 
-    true_color_432 = landsat.select(['B4', 'B3', 'B2'])
-    #true_color_432_vis = {'min': 0.0, 'max': 0.4}
+        landsat = ee.ImageCollection("LANDSAT/LC08/C02/T1_TOA").filterDate(start_date, end_date).filterBounds(roi)
 
-    image_landsat = true_color_432.median()
+        true_color_432 = landsat.select(['B4', 'B3', 'B2'])
+        #true_color_432_vis = {'min': 0.0, 'max': 0.4}
 
-    clipped_landsat = image_landsat.clip(roi)
+        image_landsat = true_color_432.median()
 
-    exportImage_landsat = clipped_landsat.select('B.*')
+        clipped_landsat = image_landsat.clip(roi)
 
-    export_gee_data(exportImage_landsat, roi, 'l', google_drive_folder)
+        exportImage_landsat = clipped_landsat.select('B.*')
+
+        export_gee_data(exportImage_landsat, roi, 'l', google_drive_folder)
 
 
 def export_gee_data(exportImage, roi, flag, google_drive_folder):
@@ -235,7 +253,7 @@ def export_gee_data(exportImage, roi, flag, google_drive_folder):
     print('Task completed with status: ', export_task.status())
 
 
-def download_gee_data():
+def drive_download_data():
     """
     This directly downloads files from my Google Drive in the GEE_Exports folder
     :return:
@@ -278,16 +296,44 @@ def download_gee_data():
         while not done:
             status, done = downloader.next_chunk()
 
-def import_gee_data(download_path):
+def plot_plume(hotspots, tif_folder, plot_folder):
     """
 
-    :param download_path:
+    :param hotspots:
+    :param tif_folder:
+    :param plot_folder:
     :return:
     """
 
-    files = glob(download_path + '\\' + '*.tif')
+    files = glob(tif_folder + '\\' + '*.tif')
 
-    return files
+    for tif_file in files:
+
+        with rio.open(tif_file) as src:
+
+            # Read the image data
+            #img_data = src.read(1)
+            b1 = src.read(1)
+            b2 = src.read(2)
+            b3 = src.read(3)
+
+            rgb = np.dstack((b1, b2, b3))
+
+            # Get the metadata
+            transform = src.transform
+            bounds = src.bounds
+
+            # Plotting
+            plt.figure(figsize=(10, 10))
+            plt.imshow(rgb, extent=[bounds.left, bounds.right, bounds.bottom, bounds.top])
+            #plt.imshow(img_data, cmap='gray', extent=[bounds.left, bounds.right, bounds.bottom, bounds.top])
+            #plt.colorbar(label='Pixel values')
+            plt.scatter(hotspots['longitude'], hotspots['latitude'])
+            #hotspots.plot(color='orange', markersize=5, label='SNPP')
+            plt.title('TIFF Image with Original Coordinates')
+            plt.xlabel('Longitude')
+            plt.ylabel('Latitude')
+            plt.savefig(plot_folder + '\\' + 'test' + str(ii) + '.png')
 
 
 if __name__ == "__main__":
@@ -295,14 +341,28 @@ if __name__ == "__main__":
     #ee.Initialize(project=gee_proj)
     ee.Initialize(opt_url='https://earthengine-highvolume.googleapis.com')
 
-    #viirs_hotspots = obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date)
+    for ii in range(0, len(plume_excel_sheet)):
 
-    # WARNING: The Landsat scale is currently set to export at 50m, and exporting the .tif takes quite a while!
-    #download_gee_data(coords, start_date, end_date, google_drive_folder)
+        print('reading excel sheet')
+        coords, VIIRS_no_days, VIIRS_date, start_date, end_date = get_info(plume_excel_sheet.iloc[ii])
 
-    download_gee_data()
+        print('obtaining VIIRS hotspots')
+        viirs_hotspots = obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date)
 
-    files = import_gee_data(download_path)
+        print('accessing and downloading gee imagery to drive')
+        # WARNING: The Landsat scale is currently set to export at 50m, and exporting the .tif takes quite a while!
+        #landsat_flag = 0
+        #download_gee_data(coords, start_date, end_date, google_drive_folder, landsat_flag)
+
+        #print('downloading data from drive to local path')
+        #drive_download_data()
+
+        plot_plume(viirs_hotspots, download_path, plot_path)
+
+        #files = import_gee_data(download_path)
+
+
+
 
 
 
