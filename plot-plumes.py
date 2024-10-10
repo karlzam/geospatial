@@ -49,6 +49,8 @@ from rasterio.plot import reshape_as_raster, reshape_as_image
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from googleapiclient.http import MediaIoBaseDownload
+import google.auth
+from googleapiclient.errors import HttpError
 
 import os
 
@@ -87,11 +89,17 @@ VIIRS_date = '2018-07-26'
 
 gee_proj = 'karlzam'
 
+# DO NOT CHANGE THIS - hardcoded later on
+# For other users: you need to share this folder with your credential for google API for google cloud
 google_drive_folder = 'GEE_Exports'
 
 start_date = '2018-07-25'
 
 end_date = '2018-07-27'
+
+download_path = r'C:\Users\kzammit\Documents\downloaded-files'
+
+creds_file = r'C:\Users\kzammit\Documents\karlzam-d3258a83d6cb.json'
 
 ###################################################################################################
 # Methods
@@ -131,6 +139,14 @@ def obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
 
 
 def download_gee_data(coords, start_date, end_date, google_drive_folder):
+    """
+
+    :param coords:
+    :param start_date:
+    :param end_date:
+    :param google_drive_folder:
+    :return:
+    """
 
     roi = ee.Geometry.Rectangle([int(coords.split(',')[0]), int(coords.split(',')[1]),
                                  int(coords.split(',')[2]), int(coords.split(',')[3])])
@@ -174,6 +190,14 @@ def download_gee_data(coords, start_date, end_date, google_drive_folder):
 
 
 def export_gee_data(exportImage, roi, flag, google_drive_folder):
+    """
+
+    :param exportImage:
+    :param roi:
+    :param flag:
+    :param google_drive_folder:
+    :return:
+    """
 
     if flag=='v':
         # Define the export parameters
@@ -211,28 +235,59 @@ def export_gee_data(exportImage, roi, flag, google_drive_folder):
     print('Task completed with status: ', export_task.status())
 
 
-def import_gee_data():
+def download_gee_data():
+    """
+    This directly downloads files from my Google Drive in the GEE_Exports folder
+    :return:
+    """
 
     creds = service_account.Credentials.from_service_account_file(
-        r'C:\Users\kzammit\Documents\karlzam-d3258a83d6cb.json',
+        creds_file,
         scopes=['https://www.googleapis.com/auth/drive']
     )
 
     drive_service = build('drive', 'v3', credentials=creds)
 
-    # Replace this with getting all of the files within the GEE folder
-    file_id = '1VtU4MvatvZgCxfon_fB4uh7K8hWxlGIg'
-    file_path = r'C:\Users\kzammit\Documents\file.tif'
+    # First, get the folder ID by querying by mimeType and name
+    folderId = drive_service.files().list(q="mimeType = 'application/vnd.google-apps.folder' and name = 'GEE_Exports'",
+                                  pageSize=10, fields="nextPageToken, files(id, name)").execute()
+    # this gives us a list of all folders with that name
+    folderIdResult = folderId.get('files', [])
+    # however, we know there is only 1 folder with that name, so we just get the id of the 1st item in the list
+    id = folderIdResult[0].get('id')
 
-    request = drive_service.files().get_media(fileId=file_id)
-    fh = io.FileIO(file_path, mode='wb')
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
+    # Now, using the folder ID gotten above, we get all the files from
+    # that particular folder
+    results = drive_service.files().list(q="'" + id + "' in parents", pageSize=10,
+                                 fields="nextPageToken, files(id, name)").execute()
+    items = results.get('files', [])
 
-    while not done:
-        status, done = downloader.next_chunk()
+    for item in items:
 
-    print('test')
+        # NOTE: Had to give permission to certificate email to see the folder: google-drive@karlzam.iam.gserviceaccount.com
+        # Replace this with getting all the files within the GEE folder
+        path = download_path
+        file_path = path + '\\' + str(item['name'])
+
+        request = drive_service.files().get_media(fileId=item['id'])
+
+        fh = io.FileIO(file_path, mode='wb')
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+
+        while not done:
+            status, done = downloader.next_chunk()
+
+def import_gee_data(download_path):
+    """
+
+    :param download_path:
+    :return:
+    """
+
+    files = glob(download_path + '\\' + '*.tif')
+
+    return files
 
 
 if __name__ == "__main__":
@@ -245,9 +300,12 @@ if __name__ == "__main__":
     # WARNING: The Landsat scale is currently set to export at 50m, and exporting the .tif takes quite a while!
     #download_gee_data(coords, start_date, end_date, google_drive_folder)
 
-    import_gee_data()
+    download_gee_data()
 
-    print('test')
+    files = import_gee_data(download_path)
+
+
+
 
 
 
