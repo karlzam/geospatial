@@ -104,6 +104,8 @@ creds_file = r'C:\Users\kzammit\Documents\google-drive-API-key\karlzam-d3258a83d
 def get_info(r):
     # Filled in by sheet
 
+    id = str(r['id'])
+
     # Coords of hotspots to pull, will also be used as bounding box for satellite imagery in GEE
     coords = str(r['coord-0']) + ',' + str(r['coord-1']) + ',' + str(r['coord-2']) + ',' + str(r['coord-3'])
 
@@ -117,7 +119,7 @@ def get_info(r):
     start_date = str(r['gee-start-date']).split(' ')[0]
     end_date = str(r['gee-end-date']).split(' ')[0]
 
-    return coords, VIIRS_no_days, VIIRS_date, start_date, end_date
+    return id, coords, VIIRS_no_days, VIIRS_date, start_date, end_date
 
 def obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
     """
@@ -152,7 +154,7 @@ def obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
     return gdf_SNPP
 
 
-def download_gee_data(coords, start_date, end_date, google_drive_folder, landsat_flag):
+def download_gee_data(id, coords, start_date, end_date, google_drive_folder, landsat_flag):
     """
 
     :param coords:
@@ -175,7 +177,8 @@ def download_gee_data(coords, start_date, end_date, google_drive_folder, landsat
 
     viirs = ee.ImageCollection("NASA/VIIRS/002/VNP09GA").filterDate(start_date, end_date).filterBounds(roi)
 
-    rgb_viirs = viirs.select(['I1', 'I2', 'I3'])
+    #rgb_viirs = viirs.select(['I1', 'I2', 'I3'])
+    rgb_viirs = viirs.select(['M5', 'M4', 'M3'])
 
     #rgbVis_viirs = {'bands': ['I1', 'I2', 'I3'], 'min':0, 'max':0.5}
 
@@ -185,9 +188,9 @@ def download_gee_data(coords, start_date, end_date, google_drive_folder, landsat
 
     ## export to google drive
     # This selects all bands that start with an "M" like in the example (but they had B)
-    exportImage_viirs = clipped_viirs.select('I.*')
+    exportImage_viirs = clipped_viirs.select('M.*')
 
-    export_gee_data(exportImage_viirs, roi, 'v', google_drive_folder)
+    export_gee_data(id, exportImage_viirs, roi, 'v', google_drive_folder)
 
     ## landsat
 
@@ -204,12 +207,12 @@ def download_gee_data(coords, start_date, end_date, google_drive_folder, landsat
 
         exportImage_landsat = clipped_landsat.select('B.*')
 
-        export_gee_data(exportImage_landsat, roi, 'l', google_drive_folder)
+        export_gee_data(id, exportImage_landsat, roi, 'l', google_drive_folder)
 
 
-def export_gee_data(exportImage, roi, flag, google_drive_folder):
+def export_gee_data(id, exportImage, roi, flag, google_drive_folder):
     """
-
+    Export data from google earth engine to google drive
     :param exportImage:
     :param roi:
     :param flag:
@@ -223,7 +226,7 @@ def export_gee_data(exportImage, roi, flag, google_drive_folder):
             image=exportImage,
             description='VIIRS_RGB_Export',
             folder=google_drive_folder,  # Change this to your preferred folder in Google Drive
-            fileNamePrefix='viirs_rgb',
+            fileNamePrefix= id + '-viirs_rgb',
             region=roi,  # Define the region to export
             scale=500,  # Scale in meters
             crs='EPSG:4326',  # Coordinate reference system
@@ -236,7 +239,7 @@ def export_gee_data(exportImage, roi, flag, google_drive_folder):
             image=exportImage,
             description='Landsat',
             folder=google_drive_folder,  # Change this to your preferred folder in Google Drive
-            fileNamePrefix='landsat-truecolour',
+            fileNamePrefix= id + '-landsat-truecolour',
             region=roi,  # Define the region to export
             scale=30,  # Scale in meters
             crs='EPSG:4326',  # Coordinate reference system
@@ -296,7 +299,7 @@ def drive_download_data():
         while not done:
             status, done = downloader.next_chunk()
 
-def plot_plume(hotspots, tif_folder, plot_folder):
+def plot_plume(id, hotspots, tif_folder, plot_folder):
     """
 
     :param hotspots:
@@ -307,33 +310,49 @@ def plot_plume(hotspots, tif_folder, plot_folder):
 
     files = glob(tif_folder + '\\' + '*.tif')
 
-    for tif_file in files:
+    sub_files = []
+    for ii in range(0, len(files)):
+        if id in files[ii]:
+            sub_files.append(files[ii])
 
-        with rio.open(tif_file) as src:
+    for tif_file in sub_files:
 
-            # Read the image data
-            #img_data = src.read(1)
-            b1 = src.read(1)
-            b2 = src.read(2)
-            b3 = src.read(3)
+        if 'viirs' in tif_file:
 
-            rgb = np.dstack((b1, b2, b3))
+            source = 'viirs'
+            plot_rgb(id, tif_file, hotspots, plot_folder, source)
 
-            # Get the metadata
-            transform = src.transform
-            bounds = src.bounds
+        if 'landsat' in tif_file:
 
-            # Plotting
-            plt.figure(figsize=(10, 10))
-            plt.imshow(rgb, extent=[bounds.left, bounds.right, bounds.bottom, bounds.top])
-            #plt.imshow(img_data, cmap='gray', extent=[bounds.left, bounds.right, bounds.bottom, bounds.top])
-            #plt.colorbar(label='Pixel values')
-            plt.scatter(hotspots['longitude'], hotspots['latitude'])
-            #hotspots.plot(color='orange', markersize=5, label='SNPP')
-            plt.title('TIFF Image with Original Coordinates')
-            plt.xlabel('Longitude')
-            plt.ylabel('Latitude')
-            plt.savefig(plot_folder + '\\' + 'test' + str(ii) + '.png')
+            source = 'landsat'
+            plot_rgb(id, tif_file, hotspots, plot_folder, source)
+
+
+
+def plot_rgb(id, tif_file, hotspots, plot_folder, source):
+
+    with rio.open(tif_file) as src:
+        # Read the image data
+        # img_data = src.read(1)
+        b1 = src.read(1)
+        b2 = src.read(2)
+        b3 = src.read(3)
+
+        rgb = np.dstack((b1, b2, b3))
+
+        # Get the metadata
+        transform = src.transform
+        bounds = src.bounds
+
+        # Plotting
+        plt.figure(figsize=(10, 10))
+        plt.imshow(rgb, extent=[bounds.left, bounds.right, bounds.bottom, bounds.top])
+        plt.scatter(hotspots['longitude'], hotspots['latitude'], label='VIIRS-SNPP Hot Spots')
+        plt.title(tif_file.split('\\')[-1])
+        plt.xlabel('Longitude')
+        plt.ylabel('Latitude')
+        plt.legend()
+        plt.savefig(plot_folder + '\\' + str (id) + '-' + str(source) +  '.png')
 
 
 if __name__ == "__main__":
@@ -344,23 +363,21 @@ if __name__ == "__main__":
     for ii in range(0, len(plume_excel_sheet)):
 
         print('reading excel sheet')
-        coords, VIIRS_no_days, VIIRS_date, start_date, end_date = get_info(plume_excel_sheet.iloc[ii])
+        id, coords, VIIRS_no_days, VIIRS_date, start_date, end_date = get_info(plume_excel_sheet.iloc[ii])
 
         print('obtaining VIIRS hotspots')
         viirs_hotspots = obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date)
 
         print('accessing and downloading gee imagery to drive')
         # WARNING: The Landsat scale is currently set to export at 50m, and exporting the .tif takes quite a while!
-        #landsat_flag = 0
-        #download_gee_data(coords, start_date, end_date, google_drive_folder, landsat_flag)
+        landsat_flag = 1
+        download_gee_data(id, coords, start_date, end_date, google_drive_folder, landsat_flag)
 
-        #print('downloading data from drive to local path')
-        #drive_download_data()
+        print('downloading data from drive to local path')
+        drive_download_data()
 
-        plot_plume(viirs_hotspots, download_path, plot_path)
-
-        #files = import_gee_data(download_path)
-
+        plot_plume(id, viirs_hotspots, download_path, plot_path)
+        print('Completed fire ' + str(id))
 
 
 

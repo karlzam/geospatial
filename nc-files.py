@@ -10,10 +10,10 @@ import xarray as xr
 
 # These are weird - from download script
 # https://lpdaac.usgs.gov/products/vnp14imgv002/
-fp = r'C:\Users\kzammit\Documents\VIIRS-data-VNP14IMG\2018\207\VNP14IMG.A2018207.2100.002.2024081023159.nc'
+#fp = r'C:\Users\kzammit\Documents\VIIRS-data-VNP14IMG\2018\207\VNP14IMG.A2018207.2100.002.2024081023159.nc'
 
 # Downloaded this directly from earth data
-#fp = r'C:\Users\kzammit\Documents\VIIRS-data-VNP14IMG\Direct\VNP14IMG.A2018207.2100.001.2018208043638.nc'
+fp = r'C:\Users\kzammit\Documents\VIIRS-data-VNP14IMG\Direct\VNP14IMG.A2018207.2100.001.2018208043638.nc'
 
 #nc = netCDF4.Dataset(fp)
 
