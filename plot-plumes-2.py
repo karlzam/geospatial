@@ -22,17 +22,47 @@ Script to plot examples of known plumes. Plots:
 ###################################################################################################
 
 import ee
+import geemap
 import io
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
+from pyproj import CRS
+from cartopy import crs as ccrs
+from geodatasets import get_path
+import rioxarray as rxr
+import matplotlib.patches as mpatches
 import time
+import seaborn as sns
+import xarray
+import openpyxl
+
 from glob import glob
+import earthpy as et
+import earthpy.spatial as es
+import earthpy.plot as ep
+
 import rasterio as rio
+from rasterio.plot import plotting_extent
+from rasterio.plot import show
+from rasterio.plot import reshape_as_raster, reshape_as_image
+
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from googleapiclient.http import MediaIoBaseDownload
+import google.auth
+from googleapiclient.errors import HttpError
+
+import os
+
+from matplotlib.colors import ListedColormap
+
+import plotly.graph_objects as go
+from rasterio.plot import show
+
+from PIL import Image
 import numpy as np
+
 from osgeo import gdal
 gdal.SetConfigOption('SHAPE_RESTORE_SHX', 'YES')
 
@@ -138,93 +168,67 @@ def download_gee_data(id, coords, start_date, end_date, VIIRS_date, google_drive
 
     # TODO: Update the image collection to grab the closest date image to the plume date instead of taking the median
 
-    """
-
-    :param coords:
-    :param start_date:
-    :param end_date:
-    :param google_drive_folder:
-    :return:
-    """
-
-    # TODO: Update the image collection to grab the closest date image to the plume date instead of taking the median
-
     roi = ee.Geometry.Rectangle([float(coords.split(',')[0]), float(coords.split(',')[1]),
                                  float(coords.split(',')[2]), float(coords.split(',')[3])])
 
     date_of_interest = ee.Date(VIIRS_date)
 
-    ## VIIRS TRUE COLOUR
-    viirs = ee.ImageCollection("NASA/VIIRS/002/VNP09GA").filterDate(start_date, end_date).filterBounds(roi)
+    # VIIRS ONE: MODERATE RESOLUTION REAL COLOUR
 
-    rgb_viirs_tc = viirs.select(['M5', 'M4', 'M3'])
+    #exportImage_viirs_rc = gee_selector(roi, start_date, end_date, date_of_interest=date_of_interest,
+    #                                    dataset="NASA/VIIRS/002/VNP09GA", bands=['M5', 'M4', 'M3'],
+    #                                    band_flag='M.*', max=0, min=0.3, flag='sort')
 
-    # Subtract the time of each image in collection from date of interest
-    rgb_viirs_tc_sort = rgb_viirs_tc.map(lambda image: image.set(
+
+    # Note this is daily so there only be one image per day
+    viirs_ic = ee.ImageCollection("NASA/VIIRS/002/VNP09GA").filterDate(start_date, end_date).filterBounds(roi)
+
+    viirs_ic_rc = viirs_ic.select(['M5', 'M4', 'M3'])
+
+    # Subtract
+    viirs_ic_rc_sort = viirs_ic_rc.map(lambda image: image.set(
         'dateDist',
         ee.Number(image.get('system:time_start')).subtract(date_of_interest.millis()).abs()
     ))
 
-    # sort in ascending order by dateDist (so top image will correspond to date of interest)
-    viirs_ic_rc_sorted = rgb_viirs_tc_sort.sort('dateDist')
+    viirs_ic_rc_sorted = viirs_ic_rc_sort.sort('dateDist')
 
-    # grab the first image from the sorted image collection
-    img_viirs_tc = viirs_ic_rc_sorted.first()
+    img_viirs_rc = viirs_ic_rc_sorted.first()
 
-    # clip the image to the roi
-    clipped_viirs_tc = img_viirs_tc.clip(roi)
+    clipped_img_viirs_rgb = img_viirs_rc.clip(roi)
 
-    # export using visualization parameters suggested by GEE
-    export_image_viirs_tc = clipped_viirs_tc.select('M.*').visualize(min=0, max=0.4)
-    export_gee_data(id, export_image_viirs_tc, roi, 'v1', google_drive_folder)
+    ## export to google drive
+    # This selects all bands that start with an "M" like in the example (but they had B)
+    exp_img_viirs_rc = clipped_img_viirs_rgb.select('M.*').visualize(min=min, max=max)
 
-    ## VIIRS FALSE COLOUR
-    rgb_viirs_fc = viirs.select(['I3', 'I2', 'I1'])
+    export_gee_data(id, exp_img_viirs_rc, roi, 'v1', google_drive_folder)
 
-    # Subtract the time of each image in collection from date of interest
-    rgb_viirs_fc_sort = rgb_viirs_fc.map(lambda image: image.set(
-        'dateDist',
-        ee.Number(image.get('system:time_start')).subtract(date_of_interest.millis()).abs()
-    ))
+    print('test')
 
-    # sort in ascending order by dateDist (so top image will correspond to date of interest)
-    viirs_ic_fc_sorted = rgb_viirs_fc_sort.sort('dateDist')
+    # VIIRS TWO: IMAGERY RESOLUTION FALSE COLOUR
 
-    # grab the first image from the sorted image collection
-    img_viirs_fc = viirs_ic_fc_sorted.first()
+    exportImage_viirs_fc = gee_selector(roi, start_date, end_date, date_of_interest=date_of_interest,
+                                        dataset="NASA/VIIRS/002/VNP09GA", bands=['I3', 'I2', 'I1'],
+                                        band_flag='I.*', max=0, min=0.3, flag='sort')
 
-    # clip the image to the roi
-    clipped_viirs_fc = img_viirs_fc.clip(roi)
+    export_gee_data(id, exportImage_viirs_fc, roi, 'v2', google_drive_folder)
 
-    # export using visualization parameters suggested by GEE
-    export_image_viirs_fc = clipped_viirs_fc.select('I.*').visualize(min=0, max=0.4)
-    export_gee_data(id, export_image_viirs_fc, roi, 'v2', google_drive_folder)
-
-
-    ## landsat
+    ## LANDSAT
 
     if landsat_flag == 1:
 
-        landsat = ee.ImageCollection("LANDSAT/LC08/C02/T1_TOA").filterDate(start_date, end_date).filterBounds(roi)
+        exportImage_landsat = gee_selector(roi, start_date, end_date, date_of_interest=date_of_interest, dataset="LANDSAT/LC08/C02/T1_TOA",
+                                     bands=['B4', 'B3', 'B2'], band_flag='B.*', max=0, min=0.4, flag='median')
 
-        true_color_432 = landsat.select(['B4', 'B3', 'B2'])
-        #true_color_432_vis = {'min': 0.0, 'max': 0.4}
+        export_gee_data(id, exportImage_landsat, roi, 'l', google_drive_folder)
 
-        # Because landsat is very slow, we want to use as much data as possible
-        # So we'll take the median value instead of sorting by date like we did for daily viirs
-        image_landsat = true_color_432.median()
+    return None
 
-        clipped_landsat = image_landsat.clip(roi)
-
-        export_image_landsat = clipped_landsat.select('B.*').visualize(min=0, max=0.4)
-
-        export_gee_data(id, export_image_landsat, roi, 'l', google_drive_folder)
 
 def gee_selector(roi, s_date, e_date, date_of_interest, dataset, bands, band_flag, max, min, flag):
     """
-    CURRENTLY NOT IN USE: WHEN USING THIS THE BAND ORDER WAS IGNORED FOR SOME REASON, REVERTED BACK TO INDIVIDUAL
-    EXPORTS WITHOUT THE USE OF THIS FUNCTION
-   :param s_date:
+
+    :param s_date:
     :param e_date:
     :param roi:
     :param date_of_interest:
@@ -265,7 +269,7 @@ def gee_selector(roi, s_date, e_date, date_of_interest, dataset, bands, band_fla
 
     ## export to google drive
     # This selects all bands that start with an "M" like in the example (but they had B)
-    export_img = clipped_img.visualize(min=min, max=max)
+    export_img = clipped_img.select(band_flag).visualize(bands=bands, min=min, max=max)
 
     return export_img
 
@@ -393,23 +397,20 @@ def plot_plume(id, hotspots, tif_folder, plot_folder):
 
         if 'viirs_true' in tif_file:
 
-            source = 'viirs-true'
-            hotspot_plot = True
-            plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot)
+            source = 'viirs'
+            plot_rgb(id, tif_file, hotspots, plot_folder, source)
 
         elif 'viirs_false' in tif_file:
             source = 'viirs_false'
-            hotspot_plot = False
-            plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot)
+            plot_rgb(id, tif_file, hotspots, plot_folder, source)
 
         if 'landsat' in tif_file:
 
             source = 'landsat'
-            hotspot_plot = True
-            plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot)
+            plot_rgb(id, tif_file, hotspots, plot_folder, source)
 
 
-def plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot):
+def plot_rgb(id, tif_file, hotspots, plot_folder, source):
 
     with rio.open(tif_file) as src:
         # Read the image data
@@ -425,10 +426,7 @@ def plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot):
         # Plotting
         plt.figure(figsize=(10, 10))
         plt.imshow(rgb, extent=[bounds.left, bounds.right, bounds.bottom, bounds.top])
-
-        if hotspot_plot:
-            plt.scatter(hotspots['longitude'], hotspots['latitude'], s=1, alpha=0.3, color='red',
-                        label='VIIRS-SNPP Hot Spots')
+        plt.scatter(hotspots['longitude'], hotspots['latitude'], s=1, label='VIIRS-SNPP Hot Spots')
         plt.title(tif_file.split('\\')[-1])
         plt.xlabel('Longitude')
         plt.ylabel('Latitude')

@@ -6,7 +6,7 @@ import xarray as xr
 # This one works
 #fp=r'C:\Users\kzammit\Documents\FWIq95_1991_2020.nc'
 
-#viirs_data = r'C:\Users\kzammit\Documents\VIIRS-data-VNP02IMG\VNP02IMG.A2018209.2018.002.2021095180702.nc'
+viirs_data = r'C:\Users\kzammit\Documents\VIIRS-data-VNP02IMG\VNP02IMG.A2018209.2018.002.2021095180702.nc'
 
 # These are weird - from download script
 # https://lpdaac.usgs.gov/products/vnp14imgv002/
