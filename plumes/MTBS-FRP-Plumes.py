@@ -25,6 +25,7 @@ from osgeo import gdal
 from datetime import datetime, timedelta
 import utm
 from pyproj import CRS
+import seaborn as sns
 
 gdal.SetConfigOption('SHAPE_RESTORE_SHX', 'YES')
 
@@ -160,7 +161,7 @@ if __name__ == "__main__":
 
         plume, poly, fire = locate_fire(row, MTBS)
 
-        #plot_MTBS_plumes()
+        plot_MTBS_plumes()
 
         # Apply 750 m buffer to final fire perimeter
 
@@ -176,31 +177,44 @@ if __name__ == "__main__":
         fire_buff = fire_buff.to_crs(epsg=4326)
 
         fig, (ax1) = plt.subplots(1, 1, figsize=(10, 10), sharex=True, sharey=True)
-        fire_buff['geometry'].plot(ax=ax1, color='red')
+        fire_buff['geometry'].plot(ax=ax1, color='yellow')
         fire['geometry'].plot(ax=ax1, color='black')
-        ax1.scatter(plume.longitude, plume.latitude, color='blue', s=1)
+        ax1.scatter(plume.longitude, plume.latitude, color='red', s=1)
+
+        # Get dataframe of spots outside of this buffered perimeter
+        df_outside_buffer = plume.iloc[:0, :].copy()
+        for index2, row2 in plume.iterrows():
+            if not fire_buff.contains(row2['geometry'])[0]:
+                df_outside_buffer.loc[len(df_outside_buffer)] = row2
+
+        df_inside_buffer = plume.iloc[:0, :].copy()
+        for index2, row2 in plume.iterrows():
+            if fire_buff.contains(row2['geometry'])[0]:
+                df_inside_buffer.loc[len(df_inside_buffer)] = row2
+
+
+
+        fig, (ax1) = plt.subplots(1, 1, figsize=(10, 10), sharex=True, sharey=True)
+        fire_buff['geometry'].plot(ax=ax1, color='yellow')
+        fire['geometry'].plot(ax=ax1, color='black')
+        #ax1.scatter(plume.longitude, plume.latitude, color='red', s=1)
+        #if len(df_outside_buffer) > 0:
+        #    print('test')
+        #    df_outside_buffer['geometry'].plot(ax=ax1, color='grey')
+        #    sns.scatterplot(x="longitude", y="latitude", data=df_outside_buffer, hue="frp", ax=ax1, size='frp', palette='viridis')
+        #sns.scatterplot(x="longitude", y="latitude", data=df_inside_buffer, hue="frp", ax=ax1, size='frp',
+        #                palette='plasma')
+
+        sns.scatterplot(x="longitude", y="latitude", data=plume, hue="frp", ax=ax1, size='frp',
+                        palette='plasma')
 
         #int_per_plume.plot()
         path = r'C:\Users\kzammit\Documents\Plumes\MTBS-boundaries'
         plt.savefig(path + '\\' + str(fire['Incid_Name'][0]) + '-buffer.png', bbox_inches='tight')
 
-        # Get dataframe of spots outside of this buffered perimeter
 
-        df_outside_buffer = plume.iloc[:0, :].copy()
-        for index2, row2 in plume.iterrows():
-
-            if fire_buff.contains(row2['geometry'])[0]:
-                #df_outside_buffer = pd.concat([df_outside_buffer, row2], axis=1)
-                #df_outside_buffer = df_outside_buffer.append(row2)
-
-                print('test')
 
         print('test')
-
-        # fire_buff.contains(point)
-
-        print('test')
-
 
 
         # Look at FRP of the spots outside vs inside the perimeter
