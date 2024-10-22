@@ -1,5 +1,6 @@
 from goes2go.data import goes_nearesttime
 from goes2go.data import goes_timerange
+from goes2go import GOES
 
 from datetime import datetime, timedelta
 import pandas as pd
@@ -31,10 +32,23 @@ import pandas as pd
 #                     product='ABI-L2-RSRC',
 #                     return_as='xarray')
 
-g = goes_nearesttime(datetime(2019, 10, 27, 10),
-                     satellite='goes16',
-                     product='ABI-L1b-RadC', download=True, overwrite=False,
-                    save_dir=r'C:\Users\kzammit\Documents\GOES', verbose=True)
+# ABI-L2-MCMIP: Level 2 Cloud and Moisture Imagery
+# G = GOES(satellite=16, product="ABI-L2-MCMIP", domain='C')
+G = GOES(satellite=16, product="ABI-L2-FDC", domain='C')
+
+df = G.df(start='2019-10-27 01:00', end='2019-10-29 01:30')
+
+# Below does not work
+
+#g = goes_nearesttime(datetime(2019, 10, 27, 1),
+#                     satellite='goes16',
+#                     product='ABI',
+#                     return_as='xarray')
+
+#g = goes_nearesttime(datetime(2019, 10, 27, 10),
+#                     satellite='goes16',
+#                     product='ABI-L1b-RadC', download=True, overwrite=False,
+#                    save_dir=r'C:\Users\kzammit\Documents\GOES', verbose=True)
 
 
 # This doesn't work! Something to do with frozen variables not working properly
