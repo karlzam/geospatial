@@ -149,7 +149,6 @@ def plot_MTBS_plumes():
     plt.savefig(path + '\\' + str(fire['Incid_Name'][0]) + '.png', bbox_inches='tight')
 
 
-
 if __name__ == "__main__":
 
     # downloaded from https://www.mtbs.gov/direct-download
@@ -193,7 +192,6 @@ if __name__ == "__main__":
                 df_inside_buffer.loc[len(df_inside_buffer)] = row2
 
 
-
         fig, (ax1) = plt.subplots(1, 1, figsize=(10, 10), sharex=True, sharey=True)
         fire_buff['geometry'].plot(ax=ax1, color='yellow')
         fire['geometry'].plot(ax=ax1, color='black')
@@ -211,7 +209,6 @@ if __name__ == "__main__":
         #int_per_plume.plot()
         path = r'C:\Users\kzammit\Documents\Plumes\MTBS-boundaries'
         plt.savefig(path + '\\' + str(fire['Incid_Name'][0]) + '-buffer.png', bbox_inches='tight')
-
 
 
         print('test')
