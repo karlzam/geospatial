@@ -92,7 +92,7 @@ def get_info(r):
     return id, coords, VIIRS_no_days, VIIRS_date, start_date, end_date
 
 
-def obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
+def obtain_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
     """
 
     Returns VIIRS hotspots from FIRMS for specified date, coordinates, and date range in the form of a
@@ -122,15 +122,65 @@ def obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
         df_SNPP, geometry=gpd.points_from_xy(df_SNPP.longitude, df_SNPP.latitude), crs="EPSG:4326"
     )
 
-    return gdf_SNPP
+    area_url_MODIS = ('https://firms.modaps.eosdis.nasa.gov/api/area/csv/' + MAP_KEY + '/MODIS_SP/' +
+                     str(coords) + '/' + str(VIIRS_no_days) + '/' + str(VIIRS_date))
+
+    df_MODIS = pd.read_csv(area_url_MODIS)
+
+    gdf_MODIS = gpd.GeoDataFrame(
+        df_MODIS, geometry=gpd.points_from_xy(df_MODIS.longitude, df_MODIS.latitude), crs="EPSG:4326"
+    )
+
+    return gdf_SNPP, gdf_MODIS
 
 
-def download_gee_data(id, coords, start_date, end_date, VIIRS_date, google_drive_folder, landsat_flag):
+def apply_scale_and_offset(image):
+    # Band aliases.
+    BLUE = 'CMI_C01'
+    RED = 'CMI_C02'
+    VEGGIE = 'CMI_C03'
+    GREEN = 'GREEN'
+
+    # Number of bands in the EE asset, 0-based.
+    NUM_BANDS = 33
+
+    # Skipping the interleaved DQF bands.
+    BLUE_BAND_INDEX = (1 - 1) * 2
+    RED_BAND_INDEX = (2 - 1) * 2
+    VEGGIE_BAND_INDEX = (3 - 1) * 2
+    GREEN_BAND_INDEX = NUM_BANDS - 1
+
+    # Visualization range for GOES RGB.
+    GOES_MIN = 0.0
+    GOES_MAX = 0.7  # Alternatively 1.0 or 1.3.
+    GAMMA = 1.3
+    bands = [None] * NUM_BANDS  # Initialize with None to ensure correct length.
+
+    for i in range(1, 17):
+        band_name = f'CMI_C{str(100 + i)[-2:]}'
+        offset = ee.Number(image.get(f'{band_name}_offset'))
+        scale = ee.Number(image.get(f'{band_name}_scale'))
+        bands[(i - 1) * 2] = image.select(band_name).multiply(scale).add(offset)
+
+        dqf_name = f'DQF_C{str(100 + i)[-2:]}'
+        bands[(i - 1) * 2 + 1] = image.select(dqf_name)
+
+    # Green = 0.45 * Red + 0.10 * NIR + 0.45 * Blue
+    green1 = bands[RED_BAND_INDEX].multiply(0.45)
+    green2 = bands[VEGGIE_BAND_INDEX].multiply(0.10)
+    green3 = bands[BLUE_BAND_INDEX].multiply(0.45)
+    green = green1.add(green2).add(green3)
+    bands[GREEN_BAND_INDEX] = green.rename(GREEN)
+
+    return ee.Image(ee.Image(bands).copyProperties(image, image.propertyNames()))
+
+
+def download_gee_data(id, coords, start_date, end_date, hotspot_date, landsat_flag):
     """
 
     :param id:
     :param coords:
-    :param VIIRS_date:
+    :param hotspot_date:
     :param google_drive_folder:
     :param landsat_flag:
     :return:
@@ -152,7 +202,7 @@ def download_gee_data(id, coords, start_date, end_date, VIIRS_date, google_drive
     roi = ee.Geometry.Rectangle([float(coords.split(',')[0]), float(coords.split(',')[1]),
                                  float(coords.split(',')[2]), float(coords.split(',')[3])])
 
-    date_of_interest = ee.Date(VIIRS_date)
+    date_of_interest = ee.Date(hotspot_date)
 
     ## VIIRS TRUE COLOUR
     viirs = ee.ImageCollection("NASA/VIIRS/002/VNP09GA").filterDate(start_date, end_date).filterBounds(roi)
@@ -176,7 +226,7 @@ def download_gee_data(id, coords, start_date, end_date, VIIRS_date, google_drive
 
     # export using visualization parameters suggested by GEE
     export_image_viirs_tc = clipped_viirs_tc.select('M.*').visualize(min=0, max=0.4)
-    export_gee_data(id, export_image_viirs_tc, roi, 'v1', google_drive_folder)
+    export_gee_data(id, export_image_viirs_tc, roi, 'v1')
 
     ## VIIRS FALSE COLOUR
     rgb_viirs_fc = viirs.select(['I3', 'I2', 'I1'])
@@ -198,11 +248,79 @@ def download_gee_data(id, coords, start_date, end_date, VIIRS_date, google_drive
 
     # export using visualization parameters suggested by GEE
     export_image_viirs_fc = clipped_viirs_fc.select('I.*').visualize(min=0, max=0.4)
-    export_gee_data(id, export_image_viirs_fc, roi, 'v2', google_drive_folder)
+    export_gee_data(id, export_image_viirs_fc, roi, 'v2')
 
+    ## MODIS TERRA
+
+    terra_c = ee.ImageCollection('MODIS/061/MOD09GA').filterDate(start_date, end_date).filterBounds(roi)
+    terra = terra_c.select(['sur_refl_b01', 'sur_refl_b04', 'sur_refl_b03'])
+
+    # Subtract the time of each image in collection from date of interest
+    terra_sort = terra.map(lambda image: image.set(
+        'dateDist',
+        ee.Number(image.get('system:time_start')).subtract(date_of_interest.millis()).abs()
+    ))
+
+    # sort in ascending order by dateDist (so top image will correspond to date of interest)
+    terra_sorted = terra_sort.sort('dateDist')
+
+    # grab the first image from the sorted image collection
+    img_terra = terra_sorted.first()
+
+    # clip the image to the roi
+    clipped_terra = img_terra.clip(roi)
+
+    # export using visualization parameters suggested by GEE
+    export_image_terra = clipped_terra.select('s.*').visualize(min=-100, max=8000)
+    export_gee_data(id, export_image_terra, roi, 't')
+
+    ## MODIS AQUA
+
+    aqua_c = ee.ImageCollection('MODIS/061/MYD09GA').filterDate(start_date, end_date).filterBounds(roi)
+    aqua = aqua_c.select(['sur_refl_b01', 'sur_refl_b04', 'sur_refl_b03'])
+
+    # Subtract the time of each image in collection from date of interest
+    aqua_sort = aqua.map(lambda image: image.set(
+        'dateDist',
+        ee.Number(image.get('system:time_start')).subtract(date_of_interest.millis()).abs()
+    ))
+
+    # sort in ascending order by dateDist (so top image will correspond to date of interest)
+    aqua_sorted = aqua_sort.sort('dateDist')
+
+    # grab the first image from the sorted image collection
+    img_aqua = aqua_sorted.first()
+
+    # clip the image to the roi
+    clipped_aqua = img_aqua.clip(roi)
+
+    # export using visualization parameters suggested by GEE
+    export_image_aqua = clipped_aqua.select('s.*').visualize(min=-100, max=8000)
+    export_gee_data(id, export_image_aqua, roi, 'a')
+
+
+    # GOES
+    goes = ee.ImageCollection("NOAA/GOES/16/MCMIPC").filterDate(start_date, end_date).filterBounds(roi)
+
+    goes_sort = goes.map(lambda image: image.set(
+            'dateDist',
+            ee.Number(image.get('system:time_start')).subtract(date_of_interest.millis()).abs()))
+
+    # sort in ascending order by dateDist (so top image will correspond to date of interest)
+    goes_sorted = goes_sort.sort('dateDist')
+
+    # grab the first image from the sorted image collection
+    goes_img = goes_sorted.first()
+
+    # clip the image to the roi
+    goes_img_clipped = goes_img.clip(roi)
+
+    goes_img_tc = apply_scale_and_offset(ee.Image(goes_img_clipped))
+
+    export_image_goes = goes_img_tc.select(['CMI_C02', 'GREEN', 'CMI_C01']).visualize(min=0, max=0.7, gamma=1.3)
+    export_gee_data(id, export_image_goes, roi, 'g')
 
     ## landsat
-
     if landsat_flag == 1:
 
         landsat = ee.ImageCollection("LANDSAT/LC08/C02/T1_TOA").filterDate(start_date, end_date).filterBounds(roi)
@@ -218,59 +336,10 @@ def download_gee_data(id, coords, start_date, end_date, VIIRS_date, google_drive
 
         export_image_landsat = clipped_landsat.select('B.*').visualize(min=0, max=0.4)
 
-        export_gee_data(id, export_image_landsat, roi, 'l', google_drive_folder)
-
-def gee_selector(roi, s_date, e_date, date_of_interest, dataset, bands, band_flag, max, min, flag):
-    """
-    CURRENTLY NOT IN USE: WHEN USING THIS THE BAND ORDER WAS IGNORED FOR SOME REASON, REVERTED BACK TO INDIVIDUAL
-    EXPORTS WITHOUT THE USE OF THIS FUNCTION
-   :param s_date:
-    :param e_date:
-    :param roi:
-    :param date_of_interest:
-    :param dataset:
-    :param bands:
-    :param band_flag:
-    :param max:
-    :param min:
-    :param flag:
-    :return:
-    """
-
-    # Note this is daily so there only be one image per day
-    ic = ee.ImageCollection(dataset).filterDate(s_date, e_date).filterBounds(roi)
-
-    # get number of files in collection
-    # ic.size().getInfo()
-
-    ic_bands = ic.select(bands)
-
-    if flag == 'sort':
-
-        # Subtract
-        ic_sort = ic_bands.map(lambda image: image.set(
-            'dateDist',
-            ee.Number(image.get('system:time_start')).subtract(date_of_interest.millis()).abs()
-        ))
-
-        ic_sorted = ic_sort.sort('dateDist')
-
-        img = ic_sorted.first()
-
-    elif flag == 'median':
-
-        img = ic_bands.median()
-
-    clipped_img= img.clip(roi)
-
-    ## export to google drive
-    # This selects all bands that start with an "M" like in the example (but they had B)
-    export_img = clipped_img.visualize(min=min, max=max)
-
-    return export_img
+        export_gee_data(id, export_image_landsat, roi, 'l')
 
 
-def export_gee_data(id, exportImage, roi, flag, google_drive_folder):
+def export_gee_data(id, exportImage, roi, flag):
     """
     Export data from google earth engine to google drive
     :param exportImage:
@@ -282,42 +351,43 @@ def export_gee_data(id, exportImage, roi, flag, google_drive_folder):
 
     if flag=='v1':
         # Define the export parameters
-        export_task = ee.batch.Export.image.toDrive(
-            image=exportImage,
-            description='VIIRS_RGB_True_Export',
-            folder=google_drive_folder,  # Change this to your preferred folder in Google Drive
-            fileNamePrefix= id + '-viirs_true_rgb',
-            region=roi,  # Define the region to export
-            scale=500,  # Scale in meters
-            crs='EPSG:4326',  # Coordinate reference system
-            maxPixels=1e13  # Maximum number of pixels to export
-        )
+        gee_export(exportImage, description='VIIRS_RGB_True_Export', fileNamePrefix= id + '-viirs_true_rgb',
+                             region=roi, scale=500)
 
     elif flag=='v2':
         # Define the export parameters
-        export_task = ee.batch.Export.image.toDrive(
-            image=exportImage,
-            description='VIIRS_RGB_False_Export',
-            folder=google_drive_folder,  # Change this to your preferred folder in Google Drive
-            fileNamePrefix= id + '-viirs_false_rgb',
-            region=roi,  # Define the region to export
-            scale=500,  # Scale in meters
-            crs='EPSG:4326',  # Coordinate reference system
-            maxPixels=1e13  # Maximum number of pixels to export
-        )
+        gee_export(exportImage, description='VIIRS_RGB_False_Export', fileNamePrefix= id + '-viirs_false_rgb',
+                             region=roi, scale=500)
 
     elif flag=='l':
-        # Define the export parameters
-        export_task = ee.batch.Export.image.toDrive(
-            image=exportImage,
-            description='Landsat',
-            folder=google_drive_folder,  # Change this to your preferred folder in Google Drive
-            fileNamePrefix= id + '-landsat-truecolour',
-            region=roi,  # Define the region to export
-            scale=30,  # Scale in meters
-            crs='EPSG:4326',  # Coordinate reference system
-            maxPixels=1e13  # Maximum number of pixels to export
-        )
+        gee_export(exportImage, description='Landsat', fileNamePrefix= id + '-landsat-truecolour',
+                             region=roi, scale=30)
+
+    elif flag=='t':
+        gee_export(exportImage, description='Terra', fileNamePrefix= id + '-terra',
+                             region=roi, scale=500)
+
+    elif flag=='a':
+        gee_export(exportImage, description='Aqua', fileNamePrefix= id + '-aqua',
+                             region=roi, scale=500)
+
+    elif flag=='g':
+        gee_export(exportImage, description='GOES', fileNamePrefix= id + '-goes',
+                             region=roi, scale=500)
+
+
+def gee_export(exportImage, description, fileNamePrefix, region, scale):
+
+    export_task = ee.batch.Export.image.toDrive(
+        image=exportImage,
+        description=description,
+        folder=google_drive_folder,  # Change this to your preferred folder in Google Drive
+        fileNamePrefix= fileNamePrefix,
+        region=region,  # Define the region to export
+        scale=scale,  # Scale in meters
+        crs='EPSG:4326',  # Coordinate reference system
+        maxPixels=1e13  # Maximum number of pixels to export
+    )
 
     # Start the export task
     export_task.start()
@@ -373,7 +443,7 @@ def drive_download_data():
             status, done = downloader.next_chunk()
 
 
-def plot_plume(id, hotspots, tif_folder, plot_folder):
+def plot_plume(id, viirs, modis, tif_folder, plot_folder):
     """
 
     :param hotspots:
@@ -395,21 +465,39 @@ def plot_plume(id, hotspots, tif_folder, plot_folder):
 
             source = 'viirs-true'
             hotspot_plot = True
-            plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot)
+            plot_rgb(id, tif_file, viirs, modis, plot_folder, source, hotspot_plot)
 
         elif 'viirs_false' in tif_file:
             source = 'viirs_false'
             hotspot_plot = False
-            plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot)
+            plot_rgb(id, tif_file, viirs, modis, plot_folder, source, hotspot_plot)
 
         if 'landsat' in tif_file:
 
             source = 'landsat'
             hotspot_plot = True
-            plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot)
+            plot_rgb(id, tif_file, viirs, modis, plot_folder, source, hotspot_plot)
+
+        if 'terra' in tif_file:
+
+            source = 'terra'
+            hotspot_plot = True
+            plot_rgb(id, tif_file, viirs, modis, plot_folder, source, hotspot_plot)
+
+        if 'aqua' in tif_file:
+
+            source = 'aqua'
+            hotspot_plot = True
+            plot_rgb(id, tif_file, viirs, modis, plot_folder, source, hotspot_plot)
+
+        if 'goes' in tif_file:
+
+            source = 'goes'
+            hotspot_plot = True
+            plot_rgb(id, tif_file, viirs, modis, plot_folder, source, hotspot_plot)
 
 
-def plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot):
+def plot_rgb(id, tif_file, hotspots_v, hotspots_m, plot_folder, source, hotspot_plot):
 
     with rio.open(tif_file) as src:
         # Read the image data
@@ -427,8 +515,10 @@ def plot_rgb(id, tif_file, hotspots, plot_folder, source, hotspot_plot):
         plt.imshow(rgb, extent=[bounds.left, bounds.right, bounds.bottom, bounds.top])
 
         if hotspot_plot:
-            plt.scatter(hotspots['longitude'], hotspots['latitude'], s=1, alpha=0.3, color='red',
-                        label='VIIRS-SNPP Hot Spots')
+            plt.scatter(hotspots_v['longitude'], hotspots_v['latitude'], s=2, alpha=0.3, color='red',
+                        label='VIIRS SNPP Hotspots')
+            plt.scatter(hotspots_m['longitude'], hotspots_m['latitude'], s=1, alpha=0.3, color='orange',
+                        label='MODIS Hotspots')
         plt.title(tif_file.split('\\')[-1])
         plt.xlabel('Longitude')
         plt.ylabel('Latitude')
@@ -444,20 +534,20 @@ if __name__ == "__main__":
     for ii in range(0, len(plume_excel_sheet)):
 
         print('reading excel sheet')
-        id, coords, VIIRS_no_days, VIIRS_date, start_date, end_date = get_info(plume_excel_sheet.iloc[ii])
+        id, coords, hotspot_no_days, hotspot_date, start_date, end_date = get_info(plume_excel_sheet.iloc[ii])
 
-        print('obtaining VIIRS hotspots')
-        viirs_hotspots = obtain_viirs_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date)
+        print('obtaining hotspots')
+        viirs_snpp, modis = obtain_hotspots(FIRMS_map_key, coords, hotspot_no_days, hotspot_date)
 
         print('accessing and downloading gee imagery to drive')
         # WARNING: The Landsat scale is currently set to export at 50m, and exporting the .tif takes quite a while!
-        landsat_flag = 1
-        download_gee_data(id, coords, start_date, end_date, VIIRS_date, google_drive_folder, landsat_flag)
+        landsat_flag = 0
+        download_gee_data(id, coords, start_date, end_date, hotspot_date, landsat_flag)
 
         print('downloading data from drive to local path')
         drive_download_data()
 
-        plot_plume(id, viirs_hotspots, download_path, plot_path)
+        plot_plume(id, viirs_snpp, modis, download_path, plot_path)
         print('Completed fire ' + str(id))
 
 
