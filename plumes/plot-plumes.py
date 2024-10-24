@@ -27,6 +27,7 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import time
+from timezonefinder import TimezoneFinder
 from glob import glob
 import rasterio as rio
 from googleapiclient.discovery import build
@@ -251,7 +252,6 @@ def download_gee_data(id, coords, start_date, end_date, hotspot_date, landsat_fl
     export_gee_data(id, export_image_viirs_fc, roi, 'v2')
 
     ## MODIS TERRA
-
     terra_c = ee.ImageCollection('MODIS/061/MOD09GA').filterDate(start_date, end_date).filterBounds(roi)
     terra = terra_c.select(['sur_refl_b01', 'sur_refl_b04', 'sur_refl_b03'])
 
@@ -275,7 +275,6 @@ def download_gee_data(id, coords, start_date, end_date, hotspot_date, landsat_fl
     export_gee_data(id, export_image_terra, roi, 't')
 
     ## MODIS AQUA
-
     aqua_c = ee.ImageCollection('MODIS/061/MYD09GA').filterDate(start_date, end_date).filterBounds(roi)
     aqua = aqua_c.select(['sur_refl_b01', 'sur_refl_b04', 'sur_refl_b03'])
 
@@ -300,11 +299,19 @@ def download_gee_data(id, coords, start_date, end_date, hotspot_date, landsat_fl
 
 
     # GOES
+
     goes = ee.ImageCollection("NOAA/GOES/16/MCMIPC").filterDate(start_date, end_date).filterBounds(roi)
+
+    # Get timezone of coords (using first pair of coords)
+    obj = TimezoneFinder()
+    timezone = obj.timezone_at(lng=float(coords.split(',')[0]), lat=float(coords.split(',')[1]))
+
+    # Want to do 1:30 pm local time to coincide with viirs overpass
+    goes_date = ee.Date(hotspot_date + 'T13:30:00', timezone)
 
     goes_sort = goes.map(lambda image: image.set(
             'dateDist',
-            ee.Number(image.get('system:time_start')).subtract(date_of_interest.millis()).abs()))
+            ee.Number(image.get('system:time_start')).subtract(goes_date.millis()).abs()))
 
     # sort in ascending order by dateDist (so top image will correspond to date of interest)
     goes_sorted = goes_sort.sort('dateDist')

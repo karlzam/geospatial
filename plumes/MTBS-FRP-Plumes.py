@@ -160,7 +160,7 @@ if __name__ == "__main__":
 
         plume, poly, fire = locate_fire(row, MTBS)
 
-        plot_MTBS_plumes()
+        # plot_MTBS_plumes()
 
         # Apply 750 m buffer to final fire perimeter
 
@@ -190,6 +190,8 @@ if __name__ == "__main__":
         for index2, row2 in plume.iterrows():
             if fire_buff.contains(row2['geometry'])[0]:
                 df_inside_buffer.loc[len(df_inside_buffer)] = row2
+
+        print('test')
 
 
         fig, (ax1) = plt.subplots(1, 1, figsize=(10, 10), sharex=True, sharey=True)
