@@ -43,7 +43,7 @@ ee.Authenticate()
 # Variables
 ###################################################################################################
 
-plume_excel_sheet = pd.read_excel(r'C:\Users\kzammit\Documents\Plumes\plume-metadata-museum.xlsx')
+plume_excel_sheet = pd.read_excel(r'C:\Users\kzammit\Documents\Plumes\plume-metadata.xlsx')
 
 plot_path = r'C:\Users\kzammit\Documents\Plumes\plots'
 
@@ -93,7 +93,7 @@ def get_info(r):
     return id, coords, VIIRS_no_days, VIIRS_date, start_date, end_date
 
 
-def obtain_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
+def obtain_hotspots(id, FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
     """
 
     Returns VIIRS hotspots from FIRMS for specified date, coordinates, and date range in the form of a
@@ -123,6 +123,8 @@ def obtain_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
         df_SNPP, geometry=gpd.points_from_xy(df_SNPP.longitude, df_SNPP.latitude), crs="EPSG:4326"
     )
 
+    #gdf_SNPP.to_file(r'C:\Users\kzammit\Documents\Plumes\VIIRS-hotspots' + '\\' + str(id) + '-snpp.shp')
+
     area_url_MODIS = ('https://firms.modaps.eosdis.nasa.gov/api/area/csv/' + MAP_KEY + '/MODIS_SP/' +
                      str(coords) + '/' + str(VIIRS_no_days) + '/' + str(VIIRS_date))
 
@@ -131,6 +133,10 @@ def obtain_hotspots(FIRMS_map_key, coords, VIIRS_no_days, VIIRS_date):
     gdf_MODIS = gpd.GeoDataFrame(
         df_MODIS, geometry=gpd.points_from_xy(df_MODIS.longitude, df_MODIS.latitude), crs="EPSG:4326"
     )
+
+    #gdf_MODIS.to_file(r'C:\Users\kzammit\Documents\Plumes\VIIRS-hotspots' + '\\' + str(id) + '-modis.shp')
+
+    print('test')
 
     return gdf_SNPP, gdf_MODIS
 
@@ -544,17 +550,17 @@ if __name__ == "__main__":
         id, coords, hotspot_no_days, hotspot_date, start_date, end_date = get_info(plume_excel_sheet.iloc[ii])
 
         print('obtaining hotspots')
-        viirs_snpp, modis = obtain_hotspots(FIRMS_map_key, coords, hotspot_no_days, hotspot_date)
+        viirs_snpp, modis = obtain_hotspots(id, FIRMS_map_key, coords, hotspot_no_days, hotspot_date)
 
         print('accessing and downloading gee imagery to drive')
         # WARNING: The Landsat scale is currently set to export at 50m, and exporting the .tif takes quite a while!
         landsat_flag = 0
-        download_gee_data(id, coords, start_date, end_date, hotspot_date, landsat_flag)
+        #download_gee_data(id, coords, start_date, end_date, hotspot_date, landsat_flag)
 
         print('downloading data from drive to local path')
-        drive_download_data()
+        #drive_download_data()
 
-        plot_plume(id, viirs_snpp, modis, download_path, plot_path)
+        #plot_plume(id, viirs_snpp, modis, download_path, plot_path)
         print('Completed fire ' + str(id))
 
 

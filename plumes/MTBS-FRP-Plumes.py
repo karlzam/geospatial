@@ -26,6 +26,11 @@ from datetime import datetime, timedelta
 import utm
 from pyproj import CRS
 import seaborn as sns
+import rasterio as rio
+from rasterio.plot import plotting_extent
+from rasterio.plot import show
+from rasterio.plot import reshape_as_raster, reshape_as_image
+from rasterio.plot import show
 
 gdal.SetConfigOption('SHAPE_RESTORE_SHX', 'YES')
 
@@ -80,9 +85,18 @@ def plot_MTBS_plumes():
     if fire['Event_ID'][0] != 'CA3609512052220200713':
         int_per = gpd.read_file(r'C:\Users\kzammit\Documents\Plumes\MTBS-boundaries\from-piyush' + '\\' +
                                 str(fire['Event_ID'][0]) + '\\' + str(fire['Event_ID'][0]) + '_hotspots.shp')
+
+        dob_tiff = rio.open(r'C:\Users\kzammit\Documents\Plumes\MTBS-boundaries\from-piyush' + '\\' +
+                                str(fire['Event_ID'][0]) + '\\' + 'dob.tif')
     else:
         int_per = gpd.read_file(r'C:\Users\kzammit\Documents\Plumes\MTBS-boundaries\from-piyush' + '\\' +
                                 'F566_2020' + '\\' + 'F566_2020' + '_hotspots.shp')
+
+        dob_tiff = rio.open(r'C:\Users\kzammit\Documents\Plumes\MTBS-boundaries\from-piyush' + '\\' +
+                                'F566_2020' + '\\' + 'dob.tif')
+
+
+    print('test')
 
     # filter intermediate parameter points to be only plume date
     int_per_plume = int_per[int_per['ACQ_DATE']==row['plume-date']]
@@ -160,7 +174,7 @@ if __name__ == "__main__":
 
         plume, poly, fire = locate_fire(row, MTBS)
 
-        # plot_MTBS_plumes()
+        plot_MTBS_plumes()
 
         # Apply 750 m buffer to final fire perimeter
 
