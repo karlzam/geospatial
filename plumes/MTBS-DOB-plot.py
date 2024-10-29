@@ -152,7 +152,7 @@ if __name__ == "__main__":
         #show(dob_tiff, ax=ax1)
         #fire['geometry'].plot(ax=ax1, color='black')
         dob_tiff.plot(cmap='viridis', ax=ax2)
-        dob_perim_tiff.plot(cmap='viridis', ax=ax1)
+        dob_perim_tiff.plot(cmap='inferno', ax=ax1)
         #fire_buff['geometry'].plot(ax=ax1, color='yellow')
 
         sns.scatterplot(x="longitude", y="latitude", data=plume, hue="frp", ax=ax1, size='frp',

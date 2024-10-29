@@ -39,10 +39,10 @@ import matplotlib.pyplot as plt
 # =================================================================================
 
 # Inputs.
-input_viirs_data_path = Path(f'VNP02IMG.A2021227.2036.002.2022267024210.nc')
+input_viirs_data_path = Path(r'C:\Users\kzammit\Documents\VIIRS-raw\VNP02IMG.A2018207.2054.002.2021095151718.nc')
 
 # Outputs.
-output_data_folder = Path('')
+output_data_folder = Path(r'C:\Users\kzammit\Documents\VIIRS-raw')
 
 # =================================================================================
 # Constants

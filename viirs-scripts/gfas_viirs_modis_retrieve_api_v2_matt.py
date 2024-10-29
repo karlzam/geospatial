@@ -75,16 +75,23 @@ from laads_data_download_v2 import sync
 
 global downloadStartDay, downloadEndDay
 
+# ESDT.AYYYYDDD.HHMM.CCC.YYYYDDDHHMMSS
+
 # These integer variables define the date ranges for the downloads, in YYYYMMDD format.
 # NOTE: downloadEndDay is EXCLUSIVE.
 # These variables are used for VIIRS LAADS DAAC downloads.
-downloadStartDay  = 20180724
-downloadEndDay    = 20180728
+downloadStartDay  = 20180726
+downloadEndDay    = 20180727
 
 # This string variable specifies the LAADS DAAC authentication token to use for the download.
 # Used for VIIRS data from LAADS DAAC.
 # TODO: Add LAADS DAAC token here.
-laadsToken    = (f'eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6Imthcmx6YW0iLCJleHAiOjE3MzMwNzAyNjYsImlhdCI6MTcyNzg4NjI2NiwiaXNzIjoiaHR0cHM6Ly91cnMuZWFydGhkYXRhLm5hc2EuZ292In0.F4wQ6LSLPbMKRvfvzKlmEEA1Mbfw1q6hswd3uu3ZxB8j6dY7YuP9lU3SjwX0akl1xINOwmdg-esJPdy8VpgTZoIweJyFaCxte_OnyYi8OCp4DJWU5J3yposo8oQbDnGs5d2BfhNTvid1tRNieT0kxDIdVYLotlSDa7rk_gFUP4_uAVbd--aXhLDB9AUDV_qdREFYZfFTcsoKOp0ZU55K0lXR1MBvStw6aiz3deCfS1QhLlNjhRJgGFJZUTTHbLOcKCuTFQxwwoTpwQvpeg47mGeq80wFzCj1FimfzB3fWisdj7PRJ1cU1BXbETrKFRzsGwGafRGpM5C1V_4L7VTxbw')
+laadsToken    = (f'eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUl'
+                 f'MyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6Imthcmx6YW0iLCJleHAiOjE3MzMwNzAyNjYsImlhdCI6MTcyNzg4NjI2Niwia'
+                 f'XNzIjoiaHR0cHM6Ly91cnMuZWFydGhkYXRhLm5hc2EuZ292In0.F4wQ6LSLPbMKRvfvzKlmEEA1Mbfw1q6hswd3uu3ZxB8j6dY'
+                 f'7YuP9lU3SjwX0akl1xINOwmdg-esJPdy8VpgTZoIweJyFaCxte_OnyYi8OCp4DJWU5J3yposo8oQbDnGs5d2BfhNTvid1tRNie'
+                 f'T0kxDIdVYLotlSDa7rk_gFUP4_uAVbd--aXhLDB9AUDV_qdREFYZfFTcsoKOp0ZU55K0lXR1MBvStw6aiz3deCfS1QhLlNjhRJ'
+                 f'gGFJZUTTHbLOcKCuTFQxwwoTpwQvpeg47mGeq80wFzCj1FimfzB3fWisdj7PRJ1cU1BXbETrKFRzsGwGafRGpM5C1V_4L7VTxbw')
 
 # This string variable specifies the path to the folder to use for the downloaded VIIRS data.
 # Subdirectories will be created within this folder using the following structure:
@@ -106,12 +113,12 @@ regions = "UnitedStates"
 # VNP14IMG).
 #product = "VNP02IMG"
 #product = "VNP14IMG"
-product = "VNP09GA.002"
+product = "VNP02IMG"
 
 # These string variables specify temporal ranges.
 # Used for VIIRS L2 Earthdata downloads.
-start_date_l2 = '2018-06'
-end_date_l2 = '2018-07'
+#start_date_l2 = '2018-06'
+#end_date_l2 = '2018-07'
 #start_date_l2 = '2021-07-14'
 #end_date_l2 = '2021-07-14'
 
@@ -119,19 +126,19 @@ end_date_l2 = '2018-07'
 # upper_right_lon, upper_right_lat). Used for VIIRS L2 Earthdata downloads.
 # Let's define one for Canada.
 # Used for VIIRS L2 Earthdata downloads.
-bounding_box = (-123.0, 39.0, -121.0, 41.0)
+#bounding_box = (-123.0, 39.0, -121.0, 41.0)
 
 # This Boolean specifies whether to use cloud-hosted data or not.
 # Used for VIIRS L2 Earthdata downloads.
-cloud_hosted = True
+#cloud_hosted = True
 
 # This string specifies an identifier for the VIIRS data type to be downloaded.
 # Used for VIIRS L2 Earthdata downloads.
-doi = '10.5067/VIIRS/VNP09GA.002'
+#doi = '10.5067/VIIRS/VNP09GA.002'
 
 # This int specifies the number of download threads to use to download the data.
 # Used for VIIRS L2 Earthdata downloads.
-threads = 1
+#threads = 1
 
 
 ###################################################################################################
