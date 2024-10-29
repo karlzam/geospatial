@@ -1,61 +1,44 @@
-import ee
-import geemap
+# This script plots all fires reported through NBAC and the NFDB for Sep 22/23 2023.
+#
+#
+
+# =================================================================================
+# Imports
+# =================================================================================
+
 import pandas as pd
 import geopandas as gpd
-import matplotlib.pyplot as plt
-from pyproj import CRS
+import numpy as np
 
-from osgeo import gdal
-gdal.SetConfigOption('SHAPE_RESTORE_SHX', 'YES')
+# hs_sdate: date of the first detected hotspot within the spatial extent of the fire event
+# hs_edate: date of the last detected hotspot within the spatial extent of the fire event
+# ag_sdate: fire start date reported by the agency
+# ag_edate: end date reported by the agency
+# capdate: acquisition date of the source data
+# poly_ha: total area calculated in hectares (canada albers equal area conic projection)
+# adj_ha: adjusted area burn calculated in hectares
+# gid: fire year and NFIREID concat
 
-## Load basemap
-# Need the shx file too
-map = gpd.read_file(r'C:\Users\Karlee\Documents\NFC\Shapefiles\ne_50m_admin_1_states_provinces.shp')
-ca_map = map[map['iso_a2']=='CA']
-ab_bc_ma_map = ca_map[(ca_map['name']=='Alberta') | (ca_map['name']=='British Columbia') | (ca_map['name']=='Saskatchewan')]
+NBAC = gpd.read_file(r'C:\Users\kzammit\Documents\Shapefiles\NBAC\nbac_2023_20240530.shp')
 
-# Get subset polygon of example fire
-# This is in easting northing
-# Current CRS is 3978 (NAD83_NRCan_LCC_Canada)
-subset_poly = gpd.read_file(r'C:\Users\Karlee\Documents\NFC\Sep23-Fire\subset-polygon.shp')
-# This converts the lat/long properly for plotting
-# EPSG 4326 is a geographic coordinate system
-subset_poly = subset_poly.to_crs(epsg=4326)
 
-# To create a buffer we first need to project into a projected coordinate system
-# 32610 is UTM 10N
-# Q: What do when data spans multiple UTM zones?
-# Project to a specific CRS so the buffer can be applied
-gdf_projected = subset_poly.to_crs(CRS(32610))
-buffer_distance = 5000  # 5 km in meters
-#gdf_buffered = gdf_projected.copy()
-#gdf_buffered['geometry'] = gdf_projected.buffer(buffer_distance)
-#gdf_buffered = gdf_buffered.to_crs(epsg=4326)
+# The hotspot and agency start/end dates do not always align, so need to make if statement and grab the earlier
+# of the two for the start date and the later of the two for the end date, while also accounting for the '0000/00/00'
+# if there was no date reported (I'm assuming)
+NBAC['start_date'] = 'tbd'
+NBAC.loc[NBAC['HS_SDATE'] == '0000/00/00', 'start_date'] = NBAC['AG_SDATE']
+NBAC.loc[NBAC['AG_SDATE'] == '0000/00/00', 'start_date'] = NBAC['HS_SDATE']
+NBAC.loc[(NBAC['HS_SDATE'] <= NBAC['AG_SDATE']) & (NBAC['HS_SDATE'] != '0000/00/00'), 'start_date'] = NBAC['HS_SDATE']
+NBAC.loc[(NBAC['AG_SDATE'] <= NBAC['HS_SDATE']) & (NBAC['AG_SDATE'] != '0000/00/00'), 'start_date'] = NBAC['AG_SDATE']
 
-# Get csv of all Alberta fires from Sep 23
-fires_sep23 = pd.read_csv(r'C:\Users\Karlee\Documents\NFC\Sep23-Fire\alberta-fires-sep23.csv')
-df_fs23 = gpd.GeoDataFrame(fires_sep23, geometry=gpd.points_from_xy(fires_sep23.longitude, fires_sep23.latitude))
+NBAC['end_date'] = 'tbd'
+NBAC.loc[NBAC['HS_EDATE'] == '0000/00/00', 'end_date'] = NBAC['AG_EDATE']
+NBAC.loc[NBAC['AG_EDATE'] == '0000/00/00', 'end_date'] = NBAC['HS_EDATE']
+NBAC.loc[(NBAC['HS_EDATE'] >= NBAC['AG_EDATE']) & (NBAC['HS_EDATE'] != '0000/00/00'), 'end_date'] = NBAC['HS_EDATE']
+NBAC.loc[(NBAC['AG_EDATE'] >= NBAC['HS_EDATE']) & (NBAC['AG_EDATE'] != '0000/00/00'), 'end_date'] = NBAC['AG_EDATE']
 
-# Get persistent hot spots
-# These are in easting, northing
-persistent_hs = gpd.read_file(r'C:\Users\Karlee\Documents\NFC\Sep23-Fire\m3mask5_lcc.shp')
-persistent_hs_sub = persistent_hs[(persistent_hs['prov']=='AB') | (persistent_hs['prov']=='BC') | (persistent_hs['prov']=='SK')]
-persistent_hs_sub = persistent_hs_sub.to_crs(epsg=4326)
-
-## Plot the background map
-fig, ax = plt.subplots(figsize=(10,8))
-ab_bc_ma_map.plot(ax=ax, edgecolor='black', linewidth=1, cmap='Greens')
-# Set the background colour to blue
-ax.set_facecolor('#a2d2ff')
-# plot the subset polygon
-subset_poly.plot(ax=ax)
-# plot the buffer polygon
-#gdf_buffered.plot(ax=ax)
-# Plot the alberta fires from Sep 23 2023
-df_fs23.plot(ax=ax, color='red', marker='*', markersize=5)
-persistent_hs_sub.plot(ax=ax, color='black')
-# plt.show()
-plt.savefig('test.png')
+# Filter the hotspots so that we're only looking at fires which contain Sept 23 within their date range
 
 print('test')
+
 
