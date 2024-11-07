@@ -30,7 +30,7 @@ hotspots = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\all
 
 bounding_boxes = []
 for idx, row in hotspots.iterrows():
-    bounding_box = create_bounding_box(row['geometry'], 200)
+    bounding_box = create_bounding_box(row['geometry'], 2)
     bounding_boxes.append(bounding_box)
 
 hotspots['bbox'] = bounding_boxes
@@ -51,7 +51,6 @@ print('test')
 
 hotspots.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\hotspots-w-bbox.shp')
 hotspots.to_excel(r'C:\Users\kzammit\Documents\Sept23-Fire\hotspots-w-bbox.xlsx')
-
 
 # NBAC = NBAC.assign(start_dt = lambda x: pd.to_datetime(x['start_date'], format=date_format))
 

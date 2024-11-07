@@ -12,8 +12,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import matplotlib.patches as mpatches
 import shapefile as shp
-import utm
-from pyproj import CRS
+import numpy as np
 
 
 ########## NBAC ##########
@@ -26,50 +25,63 @@ from pyproj import CRS
 # poly_ha: total area calculated in hectares (canada albers equal area conic projection)
 # adj_ha: adjusted area burn calculated in hectares
 # gid: fire year and NFIREID concat
-# NBAC = gpd.read_file(r'C:\Users\kzammit\Documents\Shapefiles\NBAC\nbac_2023_20240530.shp')
+NBAC = gpd.read_file(r'C:\Users\kzammit\Documents\Shapefiles\NBAC\nbac_2023_20240530.shp')
 #
 date_format = '%Y/%m/%d'
-#
-# # The hotspot and agency start/end dates do not always align, so need to make if statement and grab the earlier
-# # of the two for the start date and the later of the two for the end date, while also accounting for the '0000/00/00'
-# # if there was no date reported (I'm assuming)
-# NBAC['start_date'] = 'tbd'
-# NBAC.loc[NBAC['HS_SDATE'] == '0000/00/00', 'start_date'] = NBAC['AG_SDATE']
-# NBAC.loc[NBAC['AG_SDATE'] == '0000/00/00', 'start_date'] = NBAC['HS_SDATE']
-# NBAC.loc[(NBAC['HS_SDATE'] <= NBAC['AG_SDATE']) & (NBAC['HS_SDATE'] != '0000/00/00'), 'start_date'] = NBAC['HS_SDATE']
-# NBAC.loc[(NBAC['AG_SDATE'] <= NBAC['HS_SDATE']) & (NBAC['AG_SDATE'] != '0000/00/00'), 'start_date'] = NBAC['AG_SDATE']
-#
-# NBAC['end_date'] = 'tbd'
-# NBAC.loc[NBAC['HS_EDATE'] == '0000/00/00', 'end_date'] = NBAC['AG_EDATE']
-# NBAC.loc[NBAC['AG_EDATE'] == '0000/00/00', 'end_date'] = NBAC['HS_EDATE']
-# NBAC.loc[(NBAC['HS_EDATE'] >= NBAC['AG_EDATE']) & (NBAC['HS_EDATE'] != '0000/00/00'), 'end_date'] = NBAC['HS_EDATE']
-# NBAC.loc[(NBAC['AG_EDATE'] >= NBAC['HS_EDATE']) & (NBAC['AG_EDATE'] != '0000/00/00'), 'end_date'] = NBAC['AG_EDATE']
-#
-# # There are some cases where there is no agency date OR hotspot date
-# # Drop these
-# NBAC = NBAC.drop(NBAC[(NBAC.start_date == '0000/00/00')].index)
-# NBAC = NBAC.drop(NBAC[(NBAC.end_date == '0000/00/00')].index)
-#
-# # Filter the hotspots so that we're only looking at fires which contain Sept 23 within their date range
+
+# The hotspot and agency start/end dates do not always align, so need to make if statement and grab the earlier
+# of the two for the start date and the later of the two for the end date, while also accounting for the '0000/00/00'
+# if there was no date reported (I'm assuming)
+NBAC['start_date'] = 'tbd'
+NBAC.loc[NBAC['HS_SDATE'] == '0000/00/00', 'start_date'] = NBAC['AG_SDATE']
+NBAC.loc[NBAC['AG_SDATE'] == '0000/00/00', 'start_date'] = NBAC['HS_SDATE']
+NBAC.loc[(NBAC['HS_SDATE'] <= NBAC['AG_SDATE']) & (NBAC['HS_SDATE'] != '0000/00/00'), 'start_date'] = NBAC['HS_SDATE']
+NBAC.loc[(NBAC['AG_SDATE'] <= NBAC['HS_SDATE']) & (NBAC['AG_SDATE'] != '0000/00/00'), 'start_date'] = NBAC['AG_SDATE']
+
+NBAC['end_date'] = 'tbd'
+NBAC.loc[NBAC['HS_EDATE'] == '0000/00/00', 'end_date'] = NBAC['AG_EDATE']
+NBAC.loc[NBAC['AG_EDATE'] == '0000/00/00', 'end_date'] = NBAC['HS_EDATE']
+NBAC.loc[(NBAC['HS_EDATE'] >= NBAC['AG_EDATE']) & (NBAC['HS_EDATE'] != '0000/00/00'), 'end_date'] = NBAC['HS_EDATE']
+NBAC.loc[(NBAC['AG_EDATE'] >= NBAC['HS_EDATE']) & (NBAC['AG_EDATE'] != '0000/00/00'), 'end_date'] = NBAC['AG_EDATE']
+
+# There are some cases where there is no agency date OR hotspot date
+# Drop these
+NBAC = NBAC.drop(NBAC[(NBAC.start_date == '0000/00/00')].index)
+NBAC = NBAC.drop(NBAC[(NBAC.end_date == '0000/00/00')].index)
+
+# Filter the hotspots so that we're only looking at fires which contain Sept 23 within their date range
 date_obj = datetime.strptime('2023/09/23', date_format)
-# NBAC['sept_23'] = 0
-# NBAC = NBAC.assign(start_dt = lambda x: pd.to_datetime(x['start_date'], format=date_format))
-# NBAC = NBAC.assign(end_dt = lambda x: pd.to_datetime(x['end_date'], format=date_format))
-#
-# # This is the line throwing the warning, redid with their suggestion
-# #NBAC['sept_23'][(NBAC['start_dt'] <= date_obj) & (NBAC['end_dt'] >= date_obj)] = 1
-# NBAC.loc[(NBAC['start_dt'] <= date_obj) & (NBAC['end_dt'] >= date_obj), "sept_23"] = 1
-#
-# # Create a dataframe for just those fires containing Sept 23 2023
-# NBAC_Sep23 = NBAC[NBAC['sept_23']==1]
-# NBAC_Sep23 = NBAC_Sep23.reset_index()
-#
-# # # Apply 375*3 buffer to NBAC fires
+NBAC['sept_23'] = 0
+NBAC = NBAC.assign(start_dt = lambda x: pd.to_datetime(x['start_date'], format=date_format))
+NBAC = NBAC.assign(end_dt = lambda x: pd.to_datetime(x['end_date'], format=date_format))
+
+# This is the line throwing the warning, redid with their suggestion
+#NBAC['sept_23'][(NBAC['start_dt'] <= date_obj) & (NBAC['end_dt'] >= date_obj)] = 1
+NBAC.loc[(NBAC['start_dt'] <= date_obj) & (NBAC['end_dt'] >= date_obj), "sept_23"] = 1
+
+NBAC['full-year'] = 0
+date_obj_s = datetime.strptime('2023/01/01', date_format)
+date_obj_e = datetime.strptime('2023/12/31', date_format)
+NBAC.loc[(NBAC['start_dt'] >= date_obj_s) & (NBAC['end_dt'] <= date_obj_e), "full-year"] = 1
+
+# Create a dataframe for just those fires containing Sept 23 2023
+NBAC_Sep23 = NBAC[NBAC['sept_23']==1]
+NBAC_Sep23 = NBAC_Sep23.reset_index()
+
+NBAC_all = NBAC[NBAC['full-year']==1]
+NBAC_all = NBAC_all.reset_index()
+# # Apply 375*3 buffer to NBAC fires
 buffer_distance = 375*3
 # NBAC_buffered = NBAC_Sep23.copy()
 # NBAC_buffered['geometry'] = NBAC_buffered.buffer(buffer_distance)
-# NBAC_buffered.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\buffered-sept23.shp')
-NBAC_buffered = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\buffered-sept23.shp')
+# NBAC_buffered.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\buffered-sept23.shp')
+NBAC23_buffered = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\buffered-sept23.shp')
+
+# # Apply 375*3 buffer to NBAC fires
+#NBAC_all_buffered = NBAC_all.copy()
+#NBAC_all_buffered['geometry'] = NBAC_all_buffered.buffer(buffer_distance)
+#NBAC_all_buffered.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\NBAC-all-buffered.shp')
+NBAC_all_buffered = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\NBAC-all-buffered.shp')
 
 
 ########## NFDB ##########
@@ -88,14 +100,13 @@ NBAC_buffered = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\buffered-
 
 #NFDB_buffered = NFDB_0923.copy()
 #NFDB_buffered['geometry'] = NFDB_buffered.buffer(buffer_distance)
-#NFDB_buffered.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\NFDB-buffered-sept23.shp')
-NFDB_buffered = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\NFDB-buffered-sept23.shp')
-
+#NFDB_buffered.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\NFDB-buffered-sept23.shp')
+NFDB_buffered = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\NFDB-buffered-sept23.shp')
 
 ########## Persistent Heat Sources ##########
 
 # Add persistent heat sources
-persistent_hs = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\m3mask5_lcc.shp')
+persistent_hs = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\m3mask5_lcc.shp')
 cad_provs = ['NL', 'PE', 'NS', 'NB', 'QC', 'ON', 'MB', 'SK', 'AB', 'BC', 'YT', 'NT', 'NU']
 persistent_hs_cad = persistent_hs[persistent_hs['prov'].isin(cad_provs)]
 
@@ -103,7 +114,8 @@ persistent_hs_cad = persistent_hs[persistent_hs['prov'].isin(cad_provs)]
 #PHS_buffered = persistent_hs_cad.copy()
 #PHS_buffered['geometry'] = PHS_buffered.buffer(buffer_distance)
 #PHS_buffered.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\PHS-buffered.shp')
-PHS_buffered= gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\PHS-buffered.shp')
+PHS_buffered= gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\PHS-buffered.shp')
+persistent_hs_proj = PHS_buffered.to_crs(epsg=4326)
 
 ########## Hot Spots ##########
 
@@ -160,10 +172,13 @@ gdf_NOAA20= gdf_NOAA20.drop(gdf_NOAA20.columns[17:], axis=1)
 
 # Messy dataframe containing all sources
 # Need to make sure they're all in the same projection first
-NBAC = NBAC_buffered.to_crs(epsg=4326)
+NBAC23_proj = NBAC23_buffered.to_crs(epsg=4326)
 NFDB = NFDB_buffered.to_crs(epsg=4326)
 PHS = PHS_buffered.to_crs(epsg=4326)
-df_all_known = pd.concat([NBAC, NFDB, PHS])
+df_all_known_23 = pd.concat([NBAC23_proj, NFDB, PHS])
+
+NBAC_all_proj = NBAC_all_buffered.to_crs(epsg=4326)
+df_all_known = pd.concat([NBAC_all_proj, NFDB, PHS])
 
 # The hotspots are already in EPSG 4326
 gdf_SNPP['sat'] = 'SNPP'
@@ -173,14 +188,17 @@ df_hotspots = df_hotspots.drop(['index_right'], axis=1)
 
 # Perform a spatial join to find hotspots within known geometries
 # how returns the geometry column for only the specified dataframe
-joined = gpd.sjoin(df_hotspots, df_all_known, predicate='within', how='left')
+joined = gpd.sjoin(df_hotspots, df_all_known_23, predicate='within', how='left')
 
 # Select only the rows that are not within any known geometries
 df_outside_buffer = joined[joined.index_right0.isnull()].copy()
 
 # Drop unnecessary columns without modifying in place
-df_ob_clean = df_outside_buffer.drop(df_outside_buffer.columns[17:], axis=1)
+df_ob_clean_23 = df_outside_buffer.drop(df_outside_buffer.columns[17:], axis=1)
 
+joined_all = gpd.sjoin(df_hotspots, df_all_known, predicate='within', how='left')
+df_outside_buffer_all = joined_all[joined_all.index_right0.isnull()].copy()
+df_ob_clean_all = df_outside_buffer_all.drop(df_outside_buffer_all.columns[17:], axis=1)
 
 ########## FLAG POINTS WITHIN 20KM OF URBAN AREA ##########
 
@@ -193,22 +211,32 @@ urban_areas = urban_areas.drop(urban_areas.columns[5:], axis=1)
 #urban_areas_buffered = urban_areas.copy()
 #urban_areas_buffered = urban_areas_buffered.to_crs('ESRI:102001')
 #urban_areas_buffered['geometry'] = urban_areas_buffered.buffer(buffer_distance)
-#urban_areas_buffered.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\urban-areas-buffered.shp')
-urban_areas_buffered = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\PHS-buffered.shp')
+#urban_areas_buffered = urban_areas_buffered.to_crs(epsg=4326)
+#urban_areas_buffered.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\urban-areas-buffered.shp')
+urban_areas_buffered = gpd.read_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\urban-areas-buffered.shp')
+urban_areas_buffered = urban_areas_buffered.to_crs(epsg=4326)
 
-# Add flag for hotspots that are within the buffered urban boundaries
-# apparently there's none?
-# TODO: revisit this later
-#ua_hs = gpd.sjoin(df_hotspots, urban_areas_buffered, predicate='within', how='left')
-#urban_areas = urban_areas[urban_areas.index_right.notnull()].copy()
-#urban_areas = urban_areas.drop(urban_areas.columns[5:], axis=1)
+# keep hotspots, add flag for if there is an urban area
+ua_hs_all = gpd.sjoin(df_ob_clean_all, urban_areas_buffered, predicate='within', how='left')
+ua_hs_all['urban'] = np.where(~ua_hs_all['index_right'].isnull(),1,0)
+ua_hs_all = ua_hs_all.drop(['index_right', 'scalerank_', 'featurecla', 'area_sqkm_', 'min_zoom_l'], axis=1)
+print('For all 2023 boundaries, there are a total of ' + str(len(df_ob_clean_all)) +
+      ' hotspots outside of the boundaries and ' + str(sum(ua_hs_all['urban'])) +
+      ' of these are within urban areas.')
 
-#df_ob_clean = df_ob_clean.rename(columns={"latitude_left": "latitude", "longitude_left": "longitude"})
-#df_ob_clean.to_excel(r'C:\Users\kzammit\Documents\Sept23-Fire\anomalies.xlsx', index=False)
+#ua_hs_all.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\all-hotspots-oob-2023.shp')
+#ua_hs_all.to_excel(r'C:\Users\kzammit\Documents\Sept23-Fire\all-hotspots-oob-2023.xlsx', index=False)
 
-# Create bounding boxes around each hotspot for further analysis with image plotting
+# keep hotspots, add flag for if there is an urban area
+ua_hs_23 = gpd.sjoin(df_ob_clean_23, urban_areas_buffered, predicate='within', how='left')
+ua_hs_23['urban'] = np.where(~ua_hs_23['index_right'].isnull(),1,0)
+ua_hs_23 = ua_hs_23.drop(['index_right', 'scalerank_', 'featurecla', 'area_sqkm_', 'min_zoom_l'], axis=1)
+print('For boundaries with overlap on Sept 23, there are a total of ' + str(len(df_ob_clean_23)) +
+      ' hotspots outside of the boundaries and ' + str(sum(ua_hs_23['urban'])) +
+      ' of these are within urban areas.')
 
-
+#ua_hs_23.to_file(r'C:\Users\kzammit\Documents\Sept23-Fire\shapefiles\all-hotspots-oob-sep23-2023.shp')
+#ua_hs_23.to_excel(r'C:\Users\kzammit\Documents\Sept23-Fire\all-hotspots-oob-sep23-2023.xlsx', index=False)
 
 ########## PLOT ##########
 
@@ -218,23 +246,20 @@ ca_map = map[map['iso_a2']=='CA']
 # ca_map.to_file(r'C:\Users\kzammit\Documents\Shapefiles\Natural-Earth\canada.shp')
 
 ca_map_proj = ca_map.to_crs(epsg=4326)
-NBAC_Sep23_proj = NBAC_buffered.to_crs(epsg=4326)
-persistent_hs_proj = PHS_buffered.to_crs(epsg=4326)
 gdf_SNPP_proj = gdf_SNPP.to_crs(epsg=4326)
 gdf_NOAA20_proj = gdf_NOAA20.to_crs(epsg=4326)
-urban_areas_buffered = urban_areas_buffered.to_crs(epsg=4326)
 
 fig, ax = plt.subplots(figsize=(10,8))
 
 ca_map_proj.plot(ax=ax, edgecolor='white', linewidth=1, color ='Black')
 
-gdf_SNPP_proj.plot(ax=ax, color='green', linewidth=1, markersize=1)
+#gdf_SNPP_proj.plot(ax=ax, color='green', linewidth=1, markersize=1)
 SNPP_patch = mpatches.Patch(color='green', label='SNPP-SP')
 
-gdf_NOAA20_proj.plot(ax=ax, color='purple', linewidth=1, markersize=1)
+#gdf_NOAA20_proj.plot(ax=ax, color='purple', linewidth=1, markersize=1)
 NOAA20_patch = mpatches.Patch(color='purple', label='NOAA20-NRT')
 
-NBAC_Sep23_proj.plot(ax=ax, color='red', linewidth=1)
+NBAC23_proj.plot(ax=ax, color='red', linewidth=1)
 NBAC_patch = mpatches.Patch(color='red', label='NBAC')
 
 NFDB.plot(ax=ax, color='white', linewidth=200, markersize=200)
@@ -246,15 +271,22 @@ PSH_patch = mpatches.Patch(color='deepskyblue', label='Persistent HS')
 urban_areas_buffered.plot(ax=ax, color='chartreuse', linewidth=1)
 ua_patch = mpatches.Patch(color='chartreuse', label='Urban Areas')
 
-df_ob_clean.plot(ax=ax, color='yellow', linewidth=1, markersize=1)
-df_ob_clean_patch = mpatches.Patch(color='yellow', label='Hotspots Outside Borders')
+#df_ob_clean_23.plot(ax=ax, color='yellow', linewidth=1, markersize=1)
+df_ob_clean_patch_23 = mpatches.Patch(color='yellow', label='Hotspots Outside Borders Sept 23')
 
-plt.legend(handles=[NBAC_patch, NFDB_patch, PSH_patch, SNPP_patch, NOAA20_patch, df_ob_clean_patch, ua_patch],
+df_ob_clean_all.plot(ax=ax, color='yellow', linewidth=1, markersize=1)
+df_ob_clean_patch_all = mpatches.Patch(color='yellow', label='Hotspots Outside Borders All 2023')
+
+#plt.legend(handles=[NBAC_patch, NFDB_patch, PSH_patch, SNPP_patch, NOAA20_patch,
+#                    df_ob_clean_patch_23, df_ob_clean_patch_all, ua_patch],
+#           bbox_to_anchor=(1.05, 1), loc='upper left')
+
+plt.legend(handles=[NBAC_patch, NFDB_patch, PSH_patch, df_ob_clean_patch_all, ua_patch],
            bbox_to_anchor=(1.05, 1), loc='upper left')
 
 plt.xlabel('Longitude')
 plt.ylabel('Latitude')
 plt.title('Fires Active Sept 23 2023')
-plt.savefig(r'C:\Users\kzammit\Documents\Sept23-Fire\sept-23-fires-buffered.png', bbox_inches='tight')
+plt.savefig(r'C:\Users\kzammit\Documents\Sept23-Fire\sept-23-fires-ob.png', bbox_inches='tight')
 
 
