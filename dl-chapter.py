@@ -1,151 +1,88 @@
-import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-import tensorflow_datasets as tfds
-import tensorflow_probability as tfp
+import geopandas as gpd
+import pandas as pd
+import datetime as dt
+from shapely.geometry import MultiPolygon, Polygon
+import matplotlib.pyplot as plt
 
+ids = ['2023_348', '2023_345', '2023_203', '2023_207', '2023_854', '2023_834']
+nbac = gpd.read_file(r'C:\Users\kzammit\Documents\Shapefiles\NBAC\nbac_2023_20240530.shp')
 
-# Create training and evaluation datasets
+# Convert to EPSG 4326 as this is what we will pull FIRMS data with
+nbac = nbac.to_crs('EPSG:4326')
 
-# Look at elements within the data
-# for elem in train_dataset.as_numpy_iterator():
-#   print(elem)
+# Filter so we're only looking at the fires of interest (the copy is so we're not altering the original dataframe)
+nbac_filtered = nbac[nbac['GID'].isin(ids)].copy()
 
+# Add a new column that is a bounding box for each fire
+# This will be used to pull FIRMS data just for the fire of interest
+nbac_filtered['bbox_coords'] = nbac_filtered['geometry'].apply(lambda geom: geom.bounds)
 
-def get_train_and_test_splits(train_size, batch_size=1):
-    # We prefetch with a buffer the same size as the dataset because th dataset
-    # is very small and fits into memory.
-    dataset = (
-        tfds.load(name="wine_quality", as_supervised=True, split="train")
-        .map(lambda x, y: (x, tf.cast(y, tf.float32)))
-        .prefetch(buffer_size=dataset_size)
-        .cache()
+# Set up the FIRMS API
+# go here to get your own: https://firms.modaps.eosdis.nasa.gov/api/map_key
+FIRMS_map_key = 'e865c77bb60984ab516517cd4cdadea0'
+MAP_KEY = FIRMS_map_key
+url = 'https://firms.modaps.eosdis.nasa.gov/mapserver/mapkey_status/?MAP_KEY=' + MAP_KEY
+try:
+    df = pd.read_json(url, typ='series')
+except:
+    # possible error, wrong MAP_KEY value, check for extra quotes, missing letters
+    print("There is an issue with the query. \nTry in your browser: %s" % url)
+
+for idx, fire in nbac_filtered.iterrows():
+
+    # no days goes backwards from the last day
+    end_date = dt.datetime.strptime(fire['HS_EDATE'], "%Y/%m/%d").date()
+    start_date = dt.datetime.strptime(fire['HS_SDATE'], "%Y/%m/%d").date()
+    delta = end_date - start_date
+    #no_days = delta.days
+    # TODO: Edit this as the maximum no days is 10, so need to concat dfs for the full date range
+    # remember it's going backwards
+    no_days = 10
+
+    # date to pull, and those before that date defined by no_days
+    date = end_date
+
+    # define bounding box of area of interest
+
+    coords = (str(fire['bbox_coords'][0]) + ',' + str(fire['bbox_coords'][1]) + ','
+              + str(fire['bbox_coords'][2]) + ',' + str(fire['bbox_coords'][3]))
+
+    #coords = (str(fire['bbox_coords'][2]) + ',' + str(fire['bbox_coords'][1]) + ','
+    #          + str(fire['bbox_coords'][0]) + ',' + str(fire['bbox_coords'][3]))
+
+    ## VIIRS_S-NPP_SP
+    # Create the corresponding URL for the fire
+    area_url_SNPP = ('https://firms.modaps.eosdis.nasa.gov/api/area/csv/' + MAP_KEY + '/VIIRS_SNPP_SP/' +
+                     str(coords) + '/' + str(no_days) + '/' + str(date))
+
+    # Read the hotspots as a pandas dataframe
+    df_SNPP = pd.read_csv(area_url_SNPP)
+
+    # Convert to a geopandas dataframe and make sure we're using the same crs as the bounding boxes
+    gdf_SNPP = gpd.GeoDataFrame(
+        df_SNPP, geometry=gpd.points_from_xy(df_SNPP.longitude, df_SNPP.latitude), crs="EPSG:4326"
     )
-    # We shuffle with a buffer the same size as the dataset.
-    train_dataset = (
-        dataset.take(train_size).shuffle(buffer_size=train_size).batch(batch_size)
-    )
-    test_dataset = dataset.skip(train_size).batch(batch_size)
 
-    return train_dataset, test_dataset
+    ## MODIS_SP
+    area_url_MODIS = ('https://firms.modaps.eosdis.nasa.gov/api/area/csv/' + MAP_KEY + '/MODIS_SP/' +
+                     str(coords) + '/' + str(no_days) + '/' + str(date))
 
-hidden_units = [8, 8]
-learning_rate = 0.001
+    # Read the hotspots as a pandas dataframe
+    df_MODIS = pd.read_csv(area_url_MODIS)
 
-
-def run_experiment(model, loss, train_dataset, test_dataset):
-
-    model.compile(
-        optimizer=keras.optimizers.RMSprop(learning_rate=learning_rate),
-        loss=loss,
-        metrics=[keras.metrics.RootMeanSquaredError()],
+    # Convert to a geopandas dataframe and make sure we're using the same crs as the bounding boxes
+    gdf_MODIS = gpd.GeoDataFrame(
+        df_MODIS, geometry=gpd.points_from_xy(df_MODIS.longitude, df_MODIS.latitude), crs="EPSG:4326"
     )
 
-    print("Start training the model...")
-    model.fit(train_dataset, epochs=num_epochs, validation_data=test_dataset)
-    print("Model training finished.")
-    _, rmse = model.evaluate(train_dataset, verbose=0)
-    print(f"Train RMSE: {round(rmse, 3)}")
+    print('test')
+    # Double checking this is in the right region
+    map = gpd.read_file(r'C:\Users\kzammit\Documents\Shapefiles\Natural-Earth\ne_10m_admin_1_states_provinces.shp')
+    ca_map = map[map['iso_a2'] == 'CA']
+    ca_map_proj = ca_map.to_crs(epsg=4326)
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ca_map_proj.plot(ax=ax, edgecolor='white', linewidth=1, color='Black')
+    gdf_SNPP.plot(ax=ax)
+    plt.savefig('test.png')
 
-    print("Evaluating model performance...")
-    _, rmse = model.evaluate(test_dataset, verbose=0)
-    print(f"Test RMSE: {round(rmse, 3)}")
-
-FEATURE_NAMES = [
-    "fixed acidity",
-    "volatile acidity",
-    "citric acid",
-    "residual sugar",
-    "chlorides",
-    "free sulfur dioxide",
-    "total sulfur dioxide",
-    "density",
-    "pH",
-    "sulphates",
-    "alcohol",
-]
-
-def create_model_inputs():
-    inputs = {}
-    for feature_name in FEATURE_NAMES:
-        inputs[feature_name] = layers.Input(
-            name=feature_name, shape=(1,), dtype=tf.float32
-        )
-    return inputs
-
-
-dataset_size = 4898
-batch_size = 256
-train_size = int(dataset_size * 0.85)
-train_dataset, test_dataset = get_train_and_test_splits(train_size, batch_size)
-
-# Look at elements within the data
-# for elem in train_dataset.as_numpy_iterator():
-#   print(elem)
-
-# Define the prior weight distribution as Normal of mean=0 and stddev=1.
-# Note that, in this example, the we prior distribution is not trainable,
-# as we fix its parameters.
-def prior(kernel_size, bias_size, dtype=None):
-    n = kernel_size + bias_size
-    prior_model = keras.Sequential(
-        [
-            tfp.layers.DistributionLambda(
-                lambda t: tfp.distributions.MultivariateNormalDiag(
-                    loc=tf.zeros(n), scale_diag=tf.ones(n)
-                )
-            )
-        ]
-    )
-    return prior_model
-
-
-# Define variational posterior weight distribution as multivariate Gaussian.
-# Note that the learnable parameters for this distribution are the means,
-# variances, and covariances.
-def posterior(kernel_size, bias_size, dtype=None):
-    n = kernel_size + bias_size
-    posterior_model = keras.Sequential(
-        [
-            tfp.layers.VariableLayer(
-                tfp.layers.MultivariateNormalTriL.params_size(n), dtype=dtype
-            ),
-            tfp.layers.MultivariateNormalTriL(n),
-        ]
-    )
-    return posterior_model
-
-
-def create_bnn_model(train_size):
-    inputs = create_model_inputs()
-    features = keras.layers.concatenate(list(inputs.values()))
-    features = layers.BatchNormalization()(features)
-
-    # Create hidden layers with weight uncertainty using the DenseVariational layer.
-    for units in hidden_units:
-        features = tfp.layers.DenseVariational(
-            units=units,
-            make_prior_fn=prior,
-            make_posterior_fn=posterior,
-            kl_weight=1 / train_size,
-            activation="sigmoid",
-        )(features)
-
-    # The output is deterministic: a single point estimate.
-    outputs = layers.Dense(units=1)(features)
-    model = keras.Model(inputs=inputs, outputs=outputs)
-    return model
-
-num_epochs = 500
-mse_loss = keras.losses.MeanSquaredError()
-train_sample_size = int(train_size * 0.3)
-print(train_sample_size)
-small_train_dataset = train_dataset.unbatch().take(train_sample_size).batch(batch_size)
-print(small_train_dataset)
-
-bnn_model_small = create_bnn_model(train_sample_size)
-run_experiment(bnn_model_small, mse_loss, small_train_dataset, test_dataset)
-
-
-print('test')
+    print('test')
