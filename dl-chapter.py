@@ -3,6 +3,9 @@ import pandas as pd
 import datetime as dt
 import matplotlib.pyplot as plt
 from shapely.plotting import plot_polygon
+import matplotlib.patches as mpatches
+import utm
+from pyproj import CRS
 
 # Define the fire IDs of interest
 # 341, 345, 348 had other fires too close
@@ -17,9 +20,23 @@ nbac = nbac.to_crs('EPSG:4326')
 
 # Filter for the fires of interest
 nbac_filtered = nbac[nbac['GID'].isin(fire_ids)].copy()
+nbac_filtered = nbac_filtered.reset_index()
 
 # Add a column with bounding box coordinates for each fire (based on the outside of th nbac
 nbac_filtered['bbox_coords'] = nbac_filtered['geometry'].apply(lambda geom: geom.bounds)
+
+# TODO: Determine UTM zone for each fire
+centroids = nbac_filtered['geometry'].centroid
+
+# Get lat and long
+lats = centroids.y
+lons = centroids.x
+
+# Define the UTM zone based on the centroids
+utm_zones = [utm.from_latlon(lat, lon)[2] for lat, lon in zip(lats, lons)]
+
+# Create a new CRS for each UTM zone
+crs_list = [CRS.from_dict({'proj': 'utm', 'zone': zone, 'south': False}) for zone in utm_zones]
 
 # FIRMS API setup (replace with your own MAP_KEY)
 MAP_KEY = 'e865c77bb60984ab516517cd4cdadea0'
@@ -32,17 +49,39 @@ except Exception as e:
     print(f"Error connecting to FIRMS API: {e}")
     print(f"Check URL in your browser: {url}")
 
+# TODO: Add buffer to NBAC perimeter for each source depending on the resolution
+# 375 m for VIIRS
+# 30 m for Landsat
+# 1000 m for MODIS
+# GOES is variable ...
+# TODO: Understand how to get the GOES pixel size
+viirs_buf_dist = 375*2.5
+landsat_buf_dist = 30*2.5
+modis_buf_dist = 1000*2.5
+
 # Loop over each fire in the filtered dataset
 for idx, fire in nbac_filtered.iterrows():
 
-    # TODO: Determine UTM zone for each fire
+    # Get the appropriate UTM CRS for this fire based on its centroid
+    crs = crs_list[idx]
 
-    # TODO: Add buffer to NBAC perimeter for each source depending on the resolution
-    # 375 m for VIIRS
-    # 30 m for Landsat
-    # 1000 m for MODIS
-    # GOES is variable ...
-    # TODO: Understand how to get the GOES pixel size
+    # Project the entire fire geometry (not just a single geometry) to the corresponding UTM CRS
+    fire_gdf = gpd.GeoDataFrame([fire], geometry=[fire['geometry']],
+                                crs=nbac_filtered.crs)  # Create a temporary GeoDataFrame
+    fire_proj = fire_gdf.to_crs(crs.to_epsg())
+
+    # Determine buffer distance based on the satellite (example using VIIRS)
+    # (You can add conditions to select different resolutions here)
+    buffer_distance = viirs_buf_dist  # Modify this based on the satellite being used
+
+    # Create a buffer around the fire geometry
+    fire_proj['geometry'] = fire_proj['geometry'].buffer(buffer_distance)
+
+    # Convert back to the original CRS (WGS 84 / EPSG:4326)
+    fire_buff = fire_proj.to_crs(epsg=4326)
+
+    # Optionally store the buffered fire in a new column (or use it as needed)
+    # nbac_filtered.at[idx, 'buffered_geometry_viirs'] = fire_buff['geometry'].iloc[0]
 
     # Convert fire start and end dates to datetime objects
     end_date = dt.datetime.strptime(fire['HS_EDATE'], "%Y/%m/%d").date()
@@ -110,15 +149,27 @@ for idx, fire in nbac_filtered.iterrows():
     ca_map = map_data[map_data['iso_a2'] == 'CA']
     ca_map_proj = ca_map.to_crs(epsg=4326)
 
-    # TODO: Add legend
     # Plot the data
     fig, ax = plt.subplots(figsize=(10, 8))
     ca_map_proj.plot(ax=ax, edgecolor='white', linewidth=1, color='black')
-    plot_polygon(fire['geometry'], ax=ax, color='white', zorder=1)
+    #plot_polygon(fire['geometry'], ax=ax, color='white', zorder=1)
+    fire_buff.plot(ax=ax, color='white', zorder=1)
+    NBAC_patch = mpatches.Patch(color='white', label='NBAC-buff')
+
     gdf_SNPP.plot(ax=ax, color='red', zorder=2)
+    SNPP_patch = mpatches.Patch(color='red', label='SNPP')
+
     gdf_MODIS.plot(ax=ax, color='orange', zorder=3)
+    MODIS_patch = mpatches.Patch(color='orange', label='MODIS')
+
     gdf_GOES.plot(ax=ax, color='yellow', zorder=4)
+    GOES_patch = mpatches.Patch(color='yellow', label='GOES')
+
     gdf_LS.plot(ax=ax, color='blue', zorder=5)
+    LS_patch = mpatches.Patch(color='blue', label='Landsat')
+
+    plt.legend(handles=[SNPP_patch, MODIS_patch, GOES_patch, LS_patch], bbox_to_anchor=(1.05, 1),
+               loc='upper left')
 
     # Set the plot limits based on the fire's bounding box
     ax.set_xlim(float(coords_str.split(',')[0]), float(coords_str.split(',')[2]))
@@ -126,6 +177,6 @@ for idx, fire in nbac_filtered.iterrows():
 
     # Save the plot to a file
     output_path = r'C:\Users\kzammit\Documents\DL-chapter\hotspots-fire-' + str(fire['GID']) + '.png'
-    plt.savefig(output_path)
+    plt.savefig(output_path, bbox_inches='tight')
 
     print(f"Saved plot for fire {fire['GID']} to {output_path}")
