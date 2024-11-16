@@ -25,7 +25,7 @@ nbac_filtered = nbac_filtered.reset_index()
 # Add a column with bounding box coordinates for each fire (based on the outside of th nbac
 nbac_filtered['bbox_coords'] = nbac_filtered['geometry'].apply(lambda geom: geom.bounds)
 
-# TODO: Determine UTM zone for each fire
+# Determine utm zone for each fire (for buffering and projection)
 centroids = nbac_filtered['geometry'].centroid
 
 # Get lat and long
@@ -42,18 +42,19 @@ crs_list = [CRS.from_dict({'proj': 'utm', 'zone': zone, 'south': False}) for zon
 MAP_KEY = 'e865c77bb60984ab516517cd4cdadea0'
 url = f'https://firms.modaps.eosdis.nasa.gov/mapserver/mapkey_status/?MAP_KEY={MAP_KEY}'
 
-# Test connection to FIRMS API
+# now let's check how many transactions we have
+# i exceeded my limit once so added this so i know why it fails sometimes
+import pandas as pd
+url = 'https://firms.modaps.eosdis.nasa.gov/mapserver/mapkey_status/?MAP_KEY=' + MAP_KEY
 try:
-    df = pd.read_json(url, typ='series')
-except Exception as e:
-    print(f"Error connecting to FIRMS API: {e}")
-    print(f"Check URL in your browser: {url}")
+  df = pd.read_json(url,  typ='series')
+  print(df)
+except:
+  # possible error, wrong MAP_KEY value, check for extra quotes, missing letters
+  print ("There is an issue with the query. \nTry in your browser: %s" % url)
 
 # TODO: Add buffer to NBAC perimeter for each source depending on the resolution
-# 375 m for VIIRS
-# 30 m for Landsat
-# 1000 m for MODIS
-# GOES is variable ...
+# Currently have completed viirs
 # TODO: Understand how to get the GOES pixel size
 viirs_buf_dist = 375*2.5
 landsat_buf_dist = 30*2.5
@@ -150,6 +151,7 @@ for idx, fire in nbac_filtered.iterrows():
     ca_map_proj = ca_map.to_crs(epsg=4326)
 
     # Plot the data
+    # TODO: Update so there's a plot for each source type with corresponding buffer around the NBAC perimeter
     fig, ax = plt.subplots(figsize=(10, 8))
     ca_map_proj.plot(ax=ax, edgecolor='white', linewidth=1, color='black')
     #plot_polygon(fire['geometry'], ax=ax, color='white', zorder=1)
