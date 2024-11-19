@@ -89,7 +89,9 @@ if __name__ == "__main__":
 
     # Define the fire IDs of interest
     # 341, 345, 348 had other fires too close
-    fire_ids = ['2023_203', '2023_207', '2023_854', '2023_834', '2023_366', '2023_897', '2023_858']
+    #fire_ids = ['2023_203', '2023_207', '2023_854', '2023_834', '2023_366', '2023_897', '2023_858']
+    # 366 has better examples of hs inside/outside buffer
+    fire_ids = ['2023_203']
 
     # Load the shapefile containing fire data
     nbac_shapefile = r'C:\Users\kzammit\Documents\Shapefiles\NBAC\nbac_2023_20240530.shp'
@@ -134,10 +136,12 @@ if __name__ == "__main__":
       print ("There is an issue with the query. \nTry in your browser: %s" % url)
 
     # Set buffer distances for each source
-    # TODO: Understand how to get the GOES pixel size
     viirs_buf_dist = 375*2.5
     landsat_buf_dist = 30*2.5
     modis_buf_dist = 1000*2.5
+    # TODO: Understand how to get the GOES pixel size and write code that will automatically determine a
+    # conversative buffer distance for the specified region
+    goes_buf_dist = 2000*2.5
 
     # Loop over each fire in the filtered dataset
     for idx, fire in nbac_filtered.iterrows():
@@ -161,12 +165,13 @@ if __name__ == "__main__":
         fire_proj_viirs['geometry'] = fire_proj_viirs['geometry'].buffer(viirs_buf_dist)
         fire_proj_modis['geometry'] = fire_proj_modis['geometry'].buffer(modis_buf_dist)
         fire_proj_landsat['geometry'] = fire_proj_landsat['geometry'].buffer(landsat_buf_dist)
-        #fire_proj_goes['geometry'] = fire_proj_goes['geometry'].buffer(goes_buf_dist)
+        fire_proj_goes['geometry'] = fire_proj_goes['geometry'].buffer(goes_buf_dist)
 
         # Convert back to the original CRS (WGS 84 / EPSG:4326)
         fire_buff_viirs = fire_proj_viirs.to_crs(epsg=4326)
         fire_buff_modis = fire_proj_modis.to_crs(epsg=4326)
         fire_buff_landsat = fire_proj_landsat.to_crs(epsg=4326)
+        fire_buff_goes = fire_proj_goes.to_crs(epsg=4326)
 
         # Convert fire start and end dates to datetime objects
         end_date = dt.datetime.strptime(fire['HS_EDATE'], "%Y/%m/%d").date()
@@ -181,11 +186,11 @@ if __name__ == "__main__":
         date_list.reverse()  # To start with the most recent date
 
         # Get the bounding box coordinates for the current fire
-        # TODO: Update so it uses the biggest buffer box (MODIS)
+        # TODO: Update so it uses the biggest buffer box (approx GOES atm)
         # It will probably be GOES eventually when I figure out that buffer
 
         # Add a column with bounding box coordinates for each fire (based on the outside of the nbac)
-        bbox_coords = fire_buff_modis['geometry'].bounds
+        bbox_coords = fire_buff_goes['geometry'].bounds
         bbox_coords = bbox_coords.reset_index(drop=True)
         coords_str = f"{bbox_coords['minx'][0]},{bbox_coords['miny'][0]},{bbox_coords['maxx'][0]},{bbox_coords['maxy'][0]}"
 
@@ -231,12 +236,17 @@ if __name__ == "__main__":
         gdf_GOES = gpd.GeoDataFrame(df_GOES_all, geometry=gpd.points_from_xy(df_GOES_all.longitude, df_GOES_all.latitude), crs="EPSG:4326")
         gdf_LS = gpd.GeoDataFrame(df_LS_all, geometry=gpd.points_from_xy(df_LS_all.longitude, df_LS_all.latitude), crs="EPSG:4326")
 
+        all_hs = pd.concat([gdf_SNPP, gdf_MODIS, gdf_GOES, gdf_LS])
+
         # TODO: Determine which hotspots are inside the buffered perimeter and which are outside
+
+
 
         # TODO: Grid data
         # https://james-brennan.github.io/posts/fast_gridding_geopandas/
 
-        xmin, ymin, xmax, ymax = fire_proj_modis.total_bounds
+        # Update this so it uses the goes bounds for now (with no buffer)
+        xmin, ymin, xmax, ymax = fire_proj_goes.total_bounds
 
         # Define the number of grid cells
         n_cells = 30
@@ -252,39 +262,74 @@ if __name__ == "__main__":
                 grid_cells.append(box(x0, y0, x1, y1))
 
         # Convert grid cells to a GeoDataFrame
-        grid_gdf = gpd.GeoDataFrame(grid_cells, columns=['geometry'], crs=fire_proj_modis.crs)
+        grid_gdf = gpd.GeoDataFrame(grid_cells, columns=['geometry'], crs=fire_proj_goes.crs)
 
         grid_gdf = grid_gdf.to_crs(epsg=4326)
 
-        # Plotting the grid and other data
-        #fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-        # Plot the grid cells
-        #grid_gdf.plot(ax=ax, facecolor='none', edgecolor='black', alpha=0.5)
-        # Optionally plot fire buffers, if needed:
-        #gdf_MODIS.plot(ax=ax, color='orange')
-        # Make sure axes are off for clarity
-        #ax.axis("off")
-        # Save the plot
-        #plt.savefig('test.png')
-
-        merged = gpd.sjoin(gdf_MODIS, grid_gdf, how='left', predicate='within')
+        merged_all = gpd.sjoin(all_hs, grid_gdf, how='left', predicate='within')
 
         # make a simple count variable that we can sum
-        merged['n_fires'] = 1
+        merged_all['n_fires'] = 1
         # Compute stats per grid cell -- aggregate fires to grid cells with dissolve
-        dissolve = merged.dissolve(by="index_right", aggfunc="count")
+        # dissolves observations into a single observation
+        dissolve = merged_all.dissolve(by="index_right", aggfunc="count")
         # put this into cell
-        grid_gdf.loc[dissolve.index, 'n_fires'] = dissolve.n_fires.values
+        grid_gdf.loc[dissolve.index, 'n_fires_all'] = dissolve.n_fires.values
 
-        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-        grid_gdf.plot(column='n_fires', figsize=(12, 8), cmap='viridis', vmax=5000, edgecolor="grey")
-        plt.autoscale(False)
-        #world = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
-        #world.to_crs(grid_gdf.crs).plot(ax=ax, color='none', edgecolor='black')
-        ax.axis('off')
-        plt.savefig('test.png')
+        ## GOES GRIDDING
+        # Join the GOES hotspots and grid together, keeping the geometry column from the GOES dataframe
+        grid_goes = gpd.sjoin(gdf_GOES, grid_gdf, how='left', predicate='within')
+
+        # Set "goes_hs" to 1 for each of these hotspots
+        grid_goes['goes_hs'] = 1
+
+        # Group the goes hotspot by the corresponding grid cell (which is indicated by index_right), counting the vals
+        dissolve_goes = grid_goes.dissolve(by="index_right", aggfunc="count")
+
+        # Set the "goes_hs" column in grid_gdf to the grouped number of goes hotspots
+        grid_gdf.loc[dissolve_goes.index, 'goes_hs'] = dissolve_goes.goes_hs.values
+
+        # GOES FRP SUM
+        grid_goes['goes_frp'] = grid_goes['frp'].fillna(0)
+        dissolve_frp_goes = grid_goes.dissolve(by="index_right", aggfunc={"goes_frp": "sum"})
+        grid_gdf.loc[dissolve_frp_goes.index, 'goes_frp'] = dissolve_frp_goes['goes_frp'].values
+
+        ## VIIRS GRIDDING
+        grid_viirs = gpd.sjoin(gdf_SNPP, grid_gdf, how='left', predicate='within')
+        grid_viirs['viirs_hs'] = 1
+        dissolve_v = grid_viirs.dissolve(by="index_right", aggfunc="count")
+        grid_gdf.loc[dissolve_v.index, 'viirs_hs'] = dissolve_v.viirs_hs.values
+        grid_viirs['viirs_frp'] = grid_viirs['frp'].fillna(0)
+        dissolve_frp_viirs = grid_viirs.dissolve(by="index_right", aggfunc={"viirs_frp": "sum"})
+        grid_gdf.loc[dissolve_frp_viirs.index, 'viirs_frp'] = dissolve_frp_viirs['viirs_frp'].values
+
+        ## MODIS GRIDDING
+        grid_modis = gpd.sjoin(gdf_MODIS, grid_gdf, how='left', predicate='within')
+        grid_modis['modis_hs'] = 1
+        dissolve_m = grid_modis.dissolve(by="index_right", aggfunc="count")
+        grid_gdf.loc[dissolve_m.index, 'modis_hs'] = dissolve_m.modis_hs.values
+        grid_modis['modis_frp'] = grid_modis['frp'].fillna(0)
+        dissolve_frp_modis = grid_modis.dissolve(by="index_right", aggfunc={"modis_frp": "sum"})
+        grid_gdf.loc[dissolve_frp_modis.index, 'modis_frp'] = dissolve_frp_modis['modis_frp'].values
+
+        ## LANDSAT GRIDDING
+        grid_ls = gpd.sjoin(gdf_LS, grid_gdf, how='left', predicate='within')
+        grid_ls['ls_hs'] = 1
+        dissolve_ls = grid_ls.dissolve(by="index_right", aggfunc="count")
+        grid_gdf.loc[dissolve_ls.index, 'ls_hs'] = dissolve_ls.ls_hs.values
+        # Landsat does not provide FRP
+
 
         print('test')
+
+        #fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        #max_plot = grid_gdf['n_fires'].max()
+        #grid_gdf.plot(column='n_fires', figsize=(12, 8), cmap='inferno',
+        #              vmax=int(max_plot+1), edgecolor="grey", legend=True)
+        #plt.autoscale(False)
+        #ax.axis('off')
+        #output_path = r'C:\Users\kzammit\Documents\DL-chapter\hotspots-fire-' + str(fire['GID']) + '-grid.png'
+        #plt.savefig(output_path, bbox_inches='tight')
 
         #plot_fires()
 
