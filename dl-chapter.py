@@ -85,6 +85,38 @@ def plot_fires():
     print(f"Saved plot for fire {fire['GID']} to {output_path}")
 
 
+def process_gridding_and_frp(source_gdf, grid_gdf, source_name, frp_available=True):
+    """
+    Processes gridding and calculates cumulative FRP for a given data source.
+
+    Args:
+        source_gdf (GeoDataFrame): The GeoDataFrame containing hotspots data for a specific source.
+        grid_gdf (GeoDataFrame): The GeoDataFrame containing the grid cells.
+        source_name (str): The name of the data source (e.g., 'goes', 'viirs', 'modis', 'ls').
+        frp_available (bool): Flag to indicate if FRP calculation is available for this source.
+
+    Returns:
+        GeoDataFrame: The updated grid_gdf with added columns for hotspot count and (optionally) cumulative FRP.
+    """
+    # Perform spatial join between the source data and the grid
+    grid_source = gpd.sjoin(source_gdf, grid_gdf, how='left', predicate='within')
+
+    # Add a column for hotspot counts
+    count_col = f'{source_name}_hs'
+    grid_source[count_col] = 1
+    dissolve_count = grid_source.dissolve(by="index_right", aggfunc="count")
+    grid_gdf.loc[dissolve_count.index, count_col] = dissolve_count[count_col].values
+
+    # Calculate cumulative FRP if available
+    if frp_available:
+        frp_col = f'{source_name}_frp'
+        grid_source[frp_col] = grid_source['frp'].fillna(0)
+        dissolve_frp = grid_source.dissolve(by="index_right", aggfunc={frp_col: "sum"})
+        grid_gdf.loc[dissolve_frp.index, frp_col] = dissolve_frp[frp_col].values
+
+    return grid_gdf
+
+
 if __name__ == "__main__":
 
     # Define the fire IDs of interest
@@ -240,9 +272,7 @@ if __name__ == "__main__":
 
         # TODO: Determine which hotspots are inside the buffered perimeter and which are outside
 
-
-
-        # TODO: Grid data
+        ## GRID DATA
         # https://james-brennan.github.io/posts/fast_gridding_geopandas/
 
         # Update this so it uses the goes bounds for now (with no buffer)
@@ -276,48 +306,14 @@ if __name__ == "__main__":
         # put this into cell
         grid_gdf.loc[dissolve.index, 'n_fires_all'] = dissolve.n_fires.values
 
-        ## GOES GRIDDING
-        # Join the GOES hotspots and grid together, keeping the geometry column from the GOES dataframe
-        grid_goes = gpd.sjoin(gdf_GOES, grid_gdf, how='left', predicate='within')
+        grid_gdf = process_gridding_and_frp(gdf_GOES, grid_gdf, 'goes')
+        grid_gdf = process_gridding_and_frp(gdf_SNPP, grid_gdf, 'viirs')
+        grid_gdf = process_gridding_and_frp(gdf_MODIS, grid_gdf, 'modis')
+        grid_gdf = process_gridding_and_frp(gdf_LS, grid_gdf, 'ls', frp_available=False)
 
-        # Set "goes_hs" to 1 for each of these hotspots
-        grid_goes['goes_hs'] = 1
-
-        # Group the goes hotspot by the corresponding grid cell (which is indicated by index_right), counting the vals
-        dissolve_goes = grid_goes.dissolve(by="index_right", aggfunc="count")
-
-        # Set the "goes_hs" column in grid_gdf to the grouped number of goes hotspots
-        grid_gdf.loc[dissolve_goes.index, 'goes_hs'] = dissolve_goes.goes_hs.values
-
-        # GOES FRP SUM
-        grid_goes['goes_frp'] = grid_goes['frp'].fillna(0)
-        dissolve_frp_goes = grid_goes.dissolve(by="index_right", aggfunc={"goes_frp": "sum"})
-        grid_gdf.loc[dissolve_frp_goes.index, 'goes_frp'] = dissolve_frp_goes['goes_frp'].values
-
-        ## VIIRS GRIDDING
-        grid_viirs = gpd.sjoin(gdf_SNPP, grid_gdf, how='left', predicate='within')
-        grid_viirs['viirs_hs'] = 1
-        dissolve_v = grid_viirs.dissolve(by="index_right", aggfunc="count")
-        grid_gdf.loc[dissolve_v.index, 'viirs_hs'] = dissolve_v.viirs_hs.values
-        grid_viirs['viirs_frp'] = grid_viirs['frp'].fillna(0)
-        dissolve_frp_viirs = grid_viirs.dissolve(by="index_right", aggfunc={"viirs_frp": "sum"})
-        grid_gdf.loc[dissolve_frp_viirs.index, 'viirs_frp'] = dissolve_frp_viirs['viirs_frp'].values
-
-        ## MODIS GRIDDING
-        grid_modis = gpd.sjoin(gdf_MODIS, grid_gdf, how='left', predicate='within')
-        grid_modis['modis_hs'] = 1
-        dissolve_m = grid_modis.dissolve(by="index_right", aggfunc="count")
-        grid_gdf.loc[dissolve_m.index, 'modis_hs'] = dissolve_m.modis_hs.values
-        grid_modis['modis_frp'] = grid_modis['frp'].fillna(0)
-        dissolve_frp_modis = grid_modis.dissolve(by="index_right", aggfunc={"modis_frp": "sum"})
-        grid_gdf.loc[dissolve_frp_modis.index, 'modis_frp'] = dissolve_frp_modis['modis_frp'].values
-
-        ## LANDSAT GRIDDING
-        grid_ls = gpd.sjoin(gdf_LS, grid_gdf, how='left', predicate='within')
-        grid_ls['ls_hs'] = 1
-        dissolve_ls = grid_ls.dissolve(by="index_right", aggfunc="count")
-        grid_gdf.loc[dissolve_ls.index, 'ls_hs'] = dissolve_ls.ls_hs.values
-        # Landsat does not provide FRP
+        grid_gdf = grid_gdf.fillna(0)
+        df = pd.DataFrame(grid_gdf)
+        df.to_csv(r'C:\Users\kzammit\Documents\DL-chapter\data.csv')
 
 
         print('test')
