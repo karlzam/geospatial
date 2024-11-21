@@ -99,15 +99,21 @@ def process_gridding_and_frp(source_gdf, grid_gdf, source_name, frp_available=Tr
         GeoDataFrame: The updated grid_gdf with added columns for hotspot count and (optionally) cumulative FRP.
     """
     # Perform spatial join between the source data and the grid
+    # This keeps the geometry column for the source_gdf, indicating what grid cell each hotspot belongs to with
+    # the "within" keyword
     grid_source = gpd.sjoin(source_gdf, grid_gdf, how='left', predicate='within')
 
     # Add a column for hotspot counts
     count_col = f'{source_name}_hs'
+    # Set the flag of "1" to indicate that row contains the specific type of hs
     grid_source[count_col] = 1
+    # This counts the number of hot spots within each grid cell and sets all cols to that value
     dissolve_count = grid_source.dissolve(by="index_right", aggfunc="count")
+    # Set the number of hotspots in each grid cell using the index and value from the dissolve_count dataframe
     grid_gdf.loc[dissolve_count.index, count_col] = dissolve_count[count_col].values
 
     # Calculate cumulative FRP if available
+    # This uses the same method as above but sums the frp_col instead of doing a count of hs
     if frp_available:
         frp_col = f'{source_name}_frp'
         grid_source[frp_col] = grid_source['frp'].fillna(0)
@@ -126,6 +132,7 @@ if __name__ == "__main__":
     fire_ids = ['2023_203']
 
     # Load the shapefile containing fire data
+    # TODO: Check if NBAC times are in UTC
     nbac_shapefile = r'C:\Users\kzammit\Documents\Shapefiles\NBAC\nbac_2023_20240530.shp'
     nbac = gpd.read_file(nbac_shapefile)
 
@@ -173,10 +180,13 @@ if __name__ == "__main__":
     modis_buf_dist = 1000*2.5
     # TODO: Understand how to get the GOES pixel size and write code that will automatically determine a
     # conversative buffer distance for the specified region
-    goes_buf_dist = 2000*2.5
+    # the largest pixel size I saw was ~4070
+    goes_buf_dist = 4070*2.5
 
     # Loop over each fire in the filtered dataset
     for idx, fire in nbac_filtered.iterrows():
+
+        print('Working on fire id ' + str(fire['NFIREID']))
 
         # Get the appropriate UTM CRS for this fire based on its centroid
         crs = crs_list[idx]
@@ -262,15 +272,26 @@ if __name__ == "__main__":
             df_GOES_all = pd.concat([df_GOES_all, df_GOES], ignore_index=True)
             df_LS_all = pd.concat([df_LS_all, df_LS], ignore_index=True)
 
+        # TODO: Maybe if necessary, the units are not the same on the track/scan
+
         # Convert the SNPP and MODIS dataframes to GeoDataFrames
         gdf_SNPP = gpd.GeoDataFrame(df_SNPP_all, geometry=gpd.points_from_xy(df_SNPP_all.longitude, df_SNPP_all.latitude), crs="EPSG:4326")
         gdf_MODIS = gpd.GeoDataFrame(df_MODIS_all, geometry=gpd.points_from_xy(df_MODIS_all.longitude, df_MODIS_all.latitude), crs="EPSG:4326")
         gdf_GOES = gpd.GeoDataFrame(df_GOES_all, geometry=gpd.points_from_xy(df_GOES_all.longitude, df_GOES_all.latitude), crs="EPSG:4326")
+        # satellite and instrument are missing for GOES, so add in some constants in these columns before appending
+        gdf_GOES['satellite'] = 'GOES'
+        gdf_GOES['instrument'] = 'ABI'
         gdf_LS = gpd.GeoDataFrame(df_LS_all, geometry=gpd.points_from_xy(df_LS_all.longitude, df_LS_all.latitude), crs="EPSG:4326")
+        # instrument for landsat is nan
+        gdf_LS['instrument'] = 'OLI'
 
-        all_hs = pd.concat([gdf_SNPP, gdf_MODIS, gdf_GOES, gdf_LS])
+        # Let's plot the hotspots on a map but colour by scan and track values
+        # gdf_GOES.plot.scatter(x='scan', y='track')
+        # gdf_GOES.plot(x='longitude', y='latitude', kind="scatter", color=gdf_GOES["track"])
+        # gdf_GOES.plot(x='longitude', y='latitude', kind="scatter", color=gdf_GOES["scan"])
 
         # TODO: Determine which hotspots are inside the buffered perimeter and which are outside
+        # Potentially for the sake of the chapter we can use unbuffered regions to get more points outside of the buffers
 
         ## GRID DATA
         # https://james-brennan.github.io/posts/fast_gridding_geopandas/
@@ -279,8 +300,11 @@ if __name__ == "__main__":
         xmin, ymin, xmax, ymax = fire_proj_goes.total_bounds
 
         # Define the number of grid cells
-        n_cells = 30
-        cell_size = (xmax - xmin) / n_cells  # Size of each grid cell
+        #n_cells = 30
+        #cell_size = (xmax - xmin) / n_cells  # Size of each grid cell
+        # Not sure if this is the right thing to do - look at other script for calculating pixel size based on math
+        # and see if it's accurate
+        cell_size = gdf_GOES['track'].max()
 
         # Create grid cells as shapely boxes
         grid_cells = []
@@ -293,40 +317,34 @@ if __name__ == "__main__":
 
         # Convert grid cells to a GeoDataFrame
         grid_gdf = gpd.GeoDataFrame(grid_cells, columns=['geometry'], crs=fire_proj_goes.crs)
-
         grid_gdf = grid_gdf.to_crs(epsg=4326)
 
-        merged_all = gpd.sjoin(all_hs, grid_gdf, how='left', predicate='within')
-
-        # make a simple count variable that we can sum
-        merged_all['n_fires'] = 1
-        # Compute stats per grid cell -- aggregate fires to grid cells with dissolve
-        # dissolves observations into a single observation
-        dissolve = merged_all.dissolve(by="index_right", aggfunc="count")
-        # put this into cell
-        grid_gdf.loc[dissolve.index, 'n_fires_all'] = dissolve.n_fires.values
-
-        grid_gdf = process_gridding_and_frp(gdf_GOES, grid_gdf, 'goes')
-        grid_gdf = process_gridding_and_frp(gdf_SNPP, grid_gdf, 'viirs')
-        grid_gdf = process_gridding_and_frp(gdf_MODIS, grid_gdf, 'modis')
+        # Currently forcing all frp avail to be false so it doesn't calculate that row
+        # Piyush made a good point that right now I'm doing for the entire fire and for different sources so it
+        # doesn't make a ton of sense to sum frp in this way
+        grid_gdf = process_gridding_and_frp(gdf_GOES, grid_gdf, 'goes', frp_available=False)
+        grid_gdf = process_gridding_and_frp(gdf_SNPP, grid_gdf, 'viirs', frp_available=False)
+        grid_gdf = process_gridding_and_frp(gdf_MODIS, grid_gdf, 'modis', frp_available=False)
         grid_gdf = process_gridding_and_frp(gdf_LS, grid_gdf, 'ls', frp_available=False)
+        grid_gdf['all_hs'] = grid_gdf[['goes_hs', 'viirs_hs', 'modis_hs', 'ls_hs']].sum(axis=1, min_count=1)
 
-        grid_gdf = grid_gdf.fillna(0)
-        df = pd.DataFrame(grid_gdf)
-        df.to_csv(r'C:\Users\kzammit\Documents\DL-chapter\data.csv')
+        #grid_gdf = grid_gdf.fillna(0)
+        #df = pd.DataFrame(grid_gdf)
+        #df.to_csv(r'C:\Users\kzammit\Documents\DL-chapter\data.csv')
 
+        # TODO: Add column that is the fraction of hotspots that are "TP" ie within the NBAC buffer
+        # Could also add in NFDB here but would have to pick a different year of fires then (which is ok)
 
-        print('test')
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        max_plot = grid_gdf['all_hs'].max()
+        grid_gdf.plot(column='all_hs', figsize=(12, 8), cmap='inferno',
+                      vmax=int(max_plot+1), edgecolor="grey", legend=True)
+        plt.autoscale(False)
+        ax.axis('off')
+        output_path = r'C:\Users\kzammit\Documents\DL-chapter\hotspots-fire-' + str(fire['GID']) + '-grid.png'
+        plt.savefig(output_path, bbox_inches='tight')
 
-        #fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-        #max_plot = grid_gdf['n_fires'].max()
-        #grid_gdf.plot(column='n_fires', figsize=(12, 8), cmap='inferno',
-        #              vmax=int(max_plot+1), edgecolor="grey", legend=True)
-        #plt.autoscale(False)
-        #ax.axis('off')
-        #output_path = r'C:\Users\kzammit\Documents\DL-chapter\hotspots-fire-' + str(fire['GID']) + '-grid.png'
-        #plt.savefig(output_path, bbox_inches='tight')
-
+        # This plots the 6 panel
         #plot_fires()
 
 

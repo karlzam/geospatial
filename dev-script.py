@@ -1,99 +1,80 @@
-import geopandas as gpd
-import pandas as pd
-import datetime as dt
-from shapely.geometry import MultiPolygon, Polygon
-import matplotlib.pyplot as plt
-from shapely.plotting import plot_polygon
+import math
 
-# Define the fire IDs of interest
-fire_ids = ['2023_348', '2023_345', '2023_203', '2023_207', '2023_854', '2023_834']
 
-# Load the shapefile containing fire data
-nbac_shapefile = r'C:\Users\kzammit\Documents\Shapefiles\NBAC\nbac_2023_20240530.shp'
-nbac = gpd.read_file(nbac_shapefile)
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """
+    Calculate the great-circle distance between two points on Earth's surface.
+    This function uses the haversine formula to compute the shortest distance
+    over the Earth's surface between two points given their latitudes and longitudes.
 
-# Convert the CRS to EPSG:4326 for compatibility with FIRMS data
-nbac = nbac.to_crs('EPSG:4326')
+    Parameters:
+    - lat1, lon1: Latitude and longitude of the first point (in degrees)
+    - lat2, lon2: Latitude and longitude of the second point (in degrees)
 
-# Filter for the fires of interest
-nbac_filtered = nbac[nbac['GID'].isin(fire_ids)].copy()
+    Returns:
+    - The great-circle distance between the two points (in kilometers)
+    """
 
-# Add a column with bounding box coordinates for each fire
-nbac_filtered['bbox_coords'] = nbac_filtered['geometry'].apply(lambda geom: geom.bounds)
+    R = 6371.0  # Earth's radius in kilometers (assumes a spherical Earth)
 
-# FIRMS API setup (replace with your own MAP_KEY)
-MAP_KEY = 'e865c77bb60984ab516517cd4cdadea0'
-url = f'https://firms.modaps.eosdis.nasa.gov/mapserver/mapkey_status/?MAP_KEY={MAP_KEY}'
+    # Convert latitude and longitude values from degrees to radians
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
 
-# Test connection to FIRMS API
-try:
-    df = pd.read_json(url, typ='series')
-except Exception as e:
-    print(f"Error connecting to FIRMS API: {e}")
-    print(f"Check URL in your browser: {url}")
+    # Calculate the difference in latitude and longitude between the two points
+    dlat = lat2 - lat1  # Difference in latitude
+    dlon = lon2 - lon1  # Difference in longitude
 
-# Loop over each fire in the filtered dataset
-for idx, fire in nbac_filtered.iterrows():
-    # Convert fire start and end dates to datetime objects
-    end_date = dt.datetime.strptime(fire['HS_EDATE'], "%Y/%m/%d").date()
-    start_date = dt.datetime.strptime(fire['HS_SDATE'], "%Y/%m/%d").date()
-    delta = end_date - start_date
+    # Apply the haversine formula:
+    # a = sin²(Δφ/2) + cos(φ1) * cos(φ2) * sin²(Δλ/2)
+    # where:
+    # - Δφ is the difference in latitude
+    # - Δλ is the difference in longitude
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
 
-    # Calculate the number of 10-day intervals
-    num_intervals = delta.days // 10
+    # Compute the central angle (c) using the arctangent function
+    # c = 2 * atan2(√a, √(1−a))
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    # Generate a list of dates for each 10-day interval
-    date_list = [end_date - dt.timedelta(days=10 * i) for i in range(num_intervals + 1)]
-    date_list.reverse()  # To start with the most recent date
+    # Calculate the great-circle distance: d = R * c
+    # Multiply the central angle (c) by the Earth's radius (R)
+    distance = R * c
 
-    # Get the bounding box coordinates for the current fire
-    bbox_coords = fire['bbox_coords']
-    coords_str = f"{bbox_coords[0]},{bbox_coords[1]},{bbox_coords[2]},{bbox_coords[3]}"
+    return distance  # Return the distance in kilometers
 
-    # Initialize dataframes for storing hotspots data
-    df_SNPP_all = pd.DataFrame()
-    df_MODIS_all = pd.DataFrame()
 
-    # Loop over the date list to download hotspot data for each 10-day period
-    for i, date in enumerate(date_list):
-        # Determine the number of days for the current period (last period might be less than 10 days)
-        period_days = 10 if i < len(date_list) - 1 else delta.days % 10
+def calculate_goes_pixel_resolution(lat, lon, satellite_longitude=-75.0, altitude=35786.0):
+    """
+    Determine the approximate resolution of a GOES pixel at a given latitude and longitude.
 
-        # Construct the FIRMS API URLs for VIIRS and MODIS
-        url_SNPP = f'https://firms.modaps.eosdis.nasa.gov/api/area/csv/{MAP_KEY}/VIIRS_SNPP_SP/{coords_str}/{period_days}/{date}'
-        url_MODIS = f'https://firms.modaps.eosdis.nasa.gov/api/area/csv/{MAP_KEY}/MODIS_SP/{coords_str}/{period_days}/{date}'
+    Parameters:
+    - lat: Latitude of the point (degrees)
+    - lon: Longitude of the point (degrees)
+    - satellite_longitude: Longitude of the GOES satellite (default is -75.0° for GOES-East)
+    - altitude: Satellite altitude above Earth's surface (default 35,786 km)
 
-        # Read the hotspot data from the API into pandas dataframes
-        df_SNPP = pd.read_csv(url_SNPP)
-        df_MODIS = pd.read_csv(url_MODIS)
+    Returns:
+    - Pixel resolution in kilometers
+    """
+    earth_radius = 6371.0  # Earth's radius in kilometers
 
-        # Concatenate the new data to the existing dataframe
-        df_SNPP_all = pd.concat([df_SNPP_all, df_SNPP], ignore_index=True)
-        df_MODIS_all = pd.concat([df_MODIS_all, df_MODIS], ignore_index=True)
+    # Step 1: Compute sub-satellite point distance
+    sub_sat_point_distance = haversine_distance(0, satellite_longitude, lat, lon)
 
-    # Convert the SNPP and MODIS dataframes to GeoDataFrames
-    gdf_SNPP = gpd.GeoDataFrame(df_SNPP_all, geometry=gpd.points_from_xy(df_SNPP_all.longitude, df_SNPP_all.latitude), crs="EPSG:4326")
-    gdf_MODIS = gpd.GeoDataFrame(df_MODIS_all, geometry=gpd.points_from_xy(df_MODIS_all.longitude, df_MODIS_all.latitude), crs="EPSG:4326")
+    # Step 2: Compute slant range
+    # Using the Pythagorean theorem in spherical coordinates
+    slant_range = math.sqrt(altitude ** 2 + earth_radius ** 2 -
+                            2 * altitude * earth_radius * math.cos(math.radians(sub_sat_point_distance / earth_radius)))
 
-    # Load the map of Canada (or other region of interest)
-    map_path = r'C:\Users\kzammit\Documents\Shapefiles\Natural-Earth\ne_10m_admin_1_states_provinces.shp'
-    map_data = gpd.read_file(map_path)
-    ca_map = map_data[map_data['iso_a2'] == 'CA']
-    ca_map_proj = ca_map.to_crs(epsg=4326)
+    # Step 3: Field of View to Ground Resolution
+    fov = 17.4  # Field of view in degrees (assume full disk for ABI)
+    resolution = slant_range * math.radians(fov) / 10800  # Convert FOV to radians and divide by ABI resolution grid size (10,800 pixels)
 
-    # Plot the data
-    fig, ax = plt.subplots(figsize=(10, 8))
-    ca_map_proj.plot(ax=ax, edgecolor='white', linewidth=1, color='black')
-    plot_polygon(fire['geometry'], ax=ax, color='white', zorder=1)
-    gdf_SNPP.plot(ax=ax, color='red', zorder=2)
-    gdf_MODIS.plot(ax=ax, color='orange', zorder=3)
+    return resolution
 
-    # Set the plot limits based on the fire's bounding box
-    ax.set_xlim(float(coords_str.split(',')[0]), float(coords_str.split(',')[2]))
-    ax.set_ylim(float(coords_str.split(',')[1]), float(coords_str.split(',')[3]))
 
-    # Save the plot to a file
-    output_path = r'C:\Users\kzammit\Documents\DL-chapter\hotspots-fire-' + str(fire['GID']) + '.png'
-    plt.savefig(output_path)
+# Example usage
+latitude = 30.0  # Latitude in degrees
+longitude = -90.0  # Longitude in degrees
 
-    print(f"Saved plot for fire {fire['GID']} to {output_path}")
+resolution = calculate_goes_pixel_resolution(latitude, longitude)
+print(f"GOES pixel resolution at ({latitude}, {longitude}): {resolution:.2f} km")
