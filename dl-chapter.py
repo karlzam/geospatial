@@ -9,6 +9,7 @@ from pyproj import CRS
 import numpy as np
 import shapely
 from shapely.geometry import box
+import math
 
 def plot_fires():
     # Load the map of Canada (or other region of interest)
@@ -56,13 +57,12 @@ def plot_fires():
     ax4.set_title('LandSat HS, LandSat buffer')
 
     # GOES
-    # TODO: Figure out how to do GOES buffer
     ca_map_proj.plot(ax=ax5, edgecolor='white', linewidth=1, color='black', zorder=1)
-    plot_polygon(fire['geometry'], ax=ax5, color='white', zorder=2)
+    fire_buff_goes.plot(ax=ax5, zorder=2, color='white')
     gdf_GOES.plot(ax=ax5, color='yellow', zorder=3)
     ax5.set_xlim(float(coords_str.split(',')[0]), float(coords_str.split(',')[2]))
     ax5.set_ylim(float(coords_str.split(',')[1]), float(coords_str.split(',')[3]))
-    ax5.set_title('GOES HS, No Buffer')
+    ax5.set_title('GOES HS, GOES Buffer')
 
     NBAC_patch = mpatches.Patch(color='white', label='NBAC-buff')
     SNPP_patch = mpatches.Patch(color='red', label='SNPP')
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     # 341, 345, 348 had other fires too close
     #fire_ids = ['2023_203', '2023_207', '2023_854', '2023_834', '2023_366', '2023_897', '2023_858']
     # 366 has better examples of hs inside/outside buffer
-    fire_ids = ['2023_203']
+    fire_ids = ['2023_854']
 
     # Load the shapefile containing fire data
     # TODO: Check if NBAC times are in UTC
@@ -142,6 +142,8 @@ if __name__ == "__main__":
     # Filter for the fires of interest
     nbac_filtered = nbac[nbac['GID'].isin(fire_ids)].copy()
     nbac_filtered = nbac_filtered.reset_index()
+
+    # TODO: Create a buffer around the outsides of the NBAC fire (ie. create a real perimeter - or what am I reading in here?)
 
     # Add a column with bounding box coordinates for each fire (based on the outside of the nbac)
     #nbac_filtered['bbox_coords'] = nbac_filtered['geometry'].apply(lambda geom: geom.bounds)
@@ -175,13 +177,10 @@ if __name__ == "__main__":
       print ("There is an issue with the query. \nTry in your browser: %s" % url)
 
     # Set buffer distances for each source
-    viirs_buf_dist = 375*2.5
-    landsat_buf_dist = 30*2.5
-    modis_buf_dist = 1000*2.5
-    # TODO: Understand how to get the GOES pixel size and write code that will automatically determine a
-    # conversative buffer distance for the specified region
-    # the largest pixel size I saw was ~4070
-    goes_buf_dist = 4070*2.5
+    viirs_buf_dist = math.sqrt(2)*375
+    landsat_buf_dist = math.sqrt(2)*30
+    modis_buf_dist = math.sqrt(2)*1000
+    goes_buf_dist = math.sqrt(2)*4000
 
     # Loop over each fire in the filtered dataset
     for idx, fire in nbac_filtered.iterrows():
@@ -209,6 +208,7 @@ if __name__ == "__main__":
         fire_proj_landsat['geometry'] = fire_proj_landsat['geometry'].buffer(landsat_buf_dist)
         fire_proj_goes['geometry'] = fire_proj_goes['geometry'].buffer(goes_buf_dist)
 
+        # TODO: Make these solid polygons to avoid the outside buffer getting hotspots within the fire perimeter
         # Convert back to the original CRS (WGS 84 / EPSG:4326)
         fire_buff_viirs = fire_proj_viirs.to_crs(epsg=4326)
         fire_buff_modis = fire_proj_modis.to_crs(epsg=4326)
@@ -227,10 +227,7 @@ if __name__ == "__main__":
         date_list = [end_date - dt.timedelta(days=10 * i) for i in range(num_intervals + 1)]
         date_list.reverse()  # To start with the most recent date
 
-        # Get the bounding box coordinates for the current fire
-        # TODO: Update so it uses the biggest buffer box (approx GOES atm)
-        # It will probably be GOES eventually when I figure out that buffer
-
+        # Get the bounding box coordinates for the current fire using the largest perimeter
         # Add a column with bounding box coordinates for each fire (based on the outside of the nbac)
         bbox_coords = fire_buff_goes['geometry'].bounds
         bbox_coords = bbox_coords.reset_index(drop=True)
@@ -272,8 +269,6 @@ if __name__ == "__main__":
             df_GOES_all = pd.concat([df_GOES_all, df_GOES], ignore_index=True)
             df_LS_all = pd.concat([df_LS_all, df_LS], ignore_index=True)
 
-        # TODO: Maybe if necessary, the units are not the same on the track/scan
-
         # Convert the SNPP and MODIS dataframes to GeoDataFrames
         gdf_SNPP = gpd.GeoDataFrame(df_SNPP_all, geometry=gpd.points_from_xy(df_SNPP_all.longitude, df_SNPP_all.latitude), crs="EPSG:4326")
         gdf_MODIS = gpd.GeoDataFrame(df_MODIS_all, geometry=gpd.points_from_xy(df_MODIS_all.longitude, df_MODIS_all.latitude), crs="EPSG:4326")
@@ -285,13 +280,36 @@ if __name__ == "__main__":
         # instrument for landsat is nan
         gdf_LS['instrument'] = 'OLI'
 
+        # This plots the 6 panel
+        #plot_fires()
+
         # Let's plot the hotspots on a map but colour by scan and track values
         # gdf_GOES.plot.scatter(x='scan', y='track')
         # gdf_GOES.plot(x='longitude', y='latitude', kind="scatter", color=gdf_GOES["track"])
         # gdf_GOES.plot(x='longitude', y='latitude', kind="scatter", color=gdf_GOES["scan"])
 
-        # TODO: Determine which hotspots are inside the buffered perimeter and which are outside
-        # Potentially for the sake of the chapter we can use unbuffered regions to get more points outside of the buffers
+        # Add column for each dataframe that determines which spots are outside their corresponding buffers
+        gdf_LS['out_buff'] = ~gdf_LS['geometry'].apply(lambda geom: fire_buff_landsat.contains(geom))
+        print(gdf_LS.out_buff.value_counts())
+        gdf_MODIS['out_buff'] = ~gdf_MODIS['geometry'].apply(lambda geom: fire_buff_modis.contains(geom))
+        print(gdf_MODIS.out_buff.value_counts())
+        gdf_SNPP['out_buff'] = ~gdf_SNPP['geometry'].apply(lambda geom: fire_buff_viirs.contains(geom))
+        print(gdf_SNPP.out_buff.value_counts())
+        gdf_GOES['out_buff'] = ~gdf_GOES['geometry'].apply(lambda geom: fire_buff_goes.contains(geom))
+        print(gdf_GOES.out_buff.value_counts())
+
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 8))
+        gdf_GOES.plot(ax=ax1, x='longitude', y='latitude', kind="scatter", color=gdf_GOES["out_buff"])
+        gdf_MODIS.plot(ax=ax2, x='longitude', y='latitude', kind="scatter", color=gdf_MODIS["out_buff"])
+        gdf_SNPP.plot(ax=ax3, x='longitude', y='latitude', kind="scatter", color=gdf_SNPP["out_buff"])
+        gdf_LS.plot(ax=ax4, x='longitude', y='latitude', kind="scatter", color=gdf_LS["out_buff"])
+        plt.savefig(r'C:\Users\kzammit\Documents\DL-chapter\'outside-buff.png')
+
+
+        print('test')
+
+
+
 
         ## GRID DATA
         # https://james-brennan.github.io/posts/fast_gridding_geopandas/
@@ -344,7 +362,6 @@ if __name__ == "__main__":
         output_path = r'C:\Users\kzammit\Documents\DL-chapter\hotspots-fire-' + str(fire['GID']) + '-grid.png'
         plt.savefig(output_path, bbox_inches='tight')
 
-        # This plots the 6 panel
-        #plot_fires()
+
 
 

@@ -85,6 +85,12 @@ sight coordinate system
 - GOES algorithm document: https://www.star.nesdis.noaa.gov/goesr/product_land_fire.php
 - Above document from this list: https://www.star.nesdis.noaa.gov/goesr/documentation_ATBDs.php
 - Scan/track in meters? 
+- On a first pass, GOES detects all pixels and identifies potential fire pixels (and block out zones due to solar 
+reflection, etc)
+- The first pass algorithm uses Dozier technique to calculate sub-pixel estimates of instantaneous fire size and 
+temperature (basically looks at different wavelengths coming to different parts of the sensor to estimate where the 
+fire is within the pixel)
+- Dozier paper: "C:\Users\kzammit\Downloads\1-s2.0-0034425781900213-main.pdf"
 
 
 
