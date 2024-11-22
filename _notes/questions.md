@@ -8,3 +8,6 @@ the length or height of the pixel but not the area?
 2. Why are the GOES hotspot resolutions so different for very similar latitudes? 
 
 3. Can I use the scan/track values to determine the pixel size or should I go the geometry route? 
+
+4. The NBAC geometry is in "multipolygon" which has lots of little areas within a region corresponding to the fire - 
+should I create a perimeter buffer first or use the hole-y perimeter?

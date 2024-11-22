@@ -120,6 +120,12 @@ def process_gridding_and_frp(source_gdf, grid_gdf, source_name, frp_available=Tr
         dissolve_frp = grid_source.dissolve(by="index_right", aggfunc={frp_col: "sum"})
         grid_gdf.loc[dissolve_frp.index, frp_col] = dissolve_frp[frp_col].values
 
+    # oib = in/out buffer (true means outside buffer)
+    oib_col = f'{source_name}_oib'
+    grid_source[oib_col] = grid_source['out_buff']
+    dissolve_oib = grid_source.dissolve(by="index_right", aggfunc={oib_col: "sum"})
+    grid_gdf.loc[dissolve_oib.index, oib_col] = dissolve_oib[oib_col].values
+
     return grid_gdf
 
 
@@ -129,7 +135,7 @@ if __name__ == "__main__":
     # 341, 345, 348 had other fires too close
     #fire_ids = ['2023_203', '2023_207', '2023_854', '2023_834', '2023_366', '2023_897', '2023_858']
     # 366 has better examples of hs inside/outside buffer
-    fire_ids = ['2023_854']
+    fire_ids = ['2023_203', '2023_854']
 
     # Load the shapefile containing fire data
     # TODO: Check if NBAC times are in UTC
@@ -143,7 +149,8 @@ if __name__ == "__main__":
     nbac_filtered = nbac[nbac['GID'].isin(fire_ids)].copy()
     nbac_filtered = nbac_filtered.reset_index()
 
-    # TODO: Create a buffer around the outsides of the NBAC fire (ie. create a real perimeter - or what am I reading in here?)
+    # Use outside of NBAC perimeter (ie. created polygon boundary instead of multipolygon)
+    # This breaks the bounding box statement, let's figure out why
 
     # Add a column with bounding box coordinates for each fire (based on the outside of the nbac)
     #nbac_filtered['bbox_coords'] = nbac_filtered['geometry'].apply(lambda geom: geom.bounds)
@@ -180,15 +187,21 @@ if __name__ == "__main__":
     viirs_buf_dist = math.sqrt(2)*375
     landsat_buf_dist = math.sqrt(2)*30
     modis_buf_dist = math.sqrt(2)*1000
+    # TODO: Something up with GOES buffer
     goes_buf_dist = math.sqrt(2)*4000
 
     # Loop over each fire in the filtered dataset
+    all_data = gpd.GeoDataFrame()
+
     for idx, fire in nbac_filtered.iterrows():
 
         print('Working on fire id ' + str(fire['NFIREID']))
 
         # Get the appropriate UTM CRS for this fire based on its centroid
         crs = crs_list[idx]
+
+        # TODO: This doesn't work for multipolygon but can't do it before or else it does all fires within the pull
+        fire['geometry'] = fire['geometry'].union_all().convex_hull
 
         # Project the entire fire geometry to the corresponding UTM CRS (determined above)
         fire_gdf = gpd.GeoDataFrame([fire], geometry=[fire['geometry']],
@@ -208,7 +221,6 @@ if __name__ == "__main__":
         fire_proj_landsat['geometry'] = fire_proj_landsat['geometry'].buffer(landsat_buf_dist)
         fire_proj_goes['geometry'] = fire_proj_goes['geometry'].buffer(goes_buf_dist)
 
-        # TODO: Make these solid polygons to avoid the outside buffer getting hotspots within the fire perimeter
         # Convert back to the original CRS (WGS 84 / EPSG:4326)
         fire_buff_viirs = fire_proj_viirs.to_crs(epsg=4326)
         fire_buff_modis = fire_proj_modis.to_crs(epsg=4326)
@@ -229,15 +241,16 @@ if __name__ == "__main__":
 
         # Get the bounding box coordinates for the current fire using the largest perimeter
         # Add a column with bounding box coordinates for each fire (based on the outside of the nbac)
-        bbox_coords = fire_buff_goes['geometry'].bounds
+        # THIS DOES NOT WORK WITH POLYGON!!!! THIS WAS THE ERROR ALL ALONG :((((
+        bbox_coords = fire_buff_modis['geometry'].bounds
         bbox_coords = bbox_coords.reset_index(drop=True)
         coords_str = f"{bbox_coords['minx'][0]},{bbox_coords['miny'][0]},{bbox_coords['maxx'][0]},{bbox_coords['maxy'][0]}"
 
-        # Initialize dataframes for storing hotspots data
-        df_SNPP_all = pd.DataFrame()
-        df_MODIS_all = pd.DataFrame()
-        df_GOES_all = pd.DataFrame()
-        df_LS_all = pd.DataFrame()
+        # define new all dataframes (before it was concatenating too many times)
+        df_SNPP_all = gpd.GeoDataFrame()
+        df_MODIS_all = gpd.GeoDataFrame()
+        df_GOES_all = gpd.GeoDataFrame()
+        df_LS_all = gpd.GeoDataFrame()
 
         # Loop over the date list to download hotspot data for each 10-day period
         for i, date in enumerate(date_list):
@@ -281,12 +294,16 @@ if __name__ == "__main__":
         gdf_LS['instrument'] = 'OLI'
 
         # This plots the 6 panel
-        #plot_fires()
+        plot_fires()
+
+        print('test')
 
         # Let's plot the hotspots on a map but colour by scan and track values
         # gdf_GOES.plot.scatter(x='scan', y='track')
         # gdf_GOES.plot(x='longitude', y='latitude', kind="scatter", color=gdf_GOES["track"])
         # gdf_GOES.plot(x='longitude', y='latitude', kind="scatter", color=gdf_GOES["scan"])
+
+        print('test')
 
         # Add column for each dataframe that determines which spots are outside their corresponding buffers
         gdf_LS['out_buff'] = ~gdf_LS['geometry'].apply(lambda geom: fire_buff_landsat.contains(geom))
@@ -298,18 +315,12 @@ if __name__ == "__main__":
         gdf_GOES['out_buff'] = ~gdf_GOES['geometry'].apply(lambda geom: fire_buff_goes.contains(geom))
         print(gdf_GOES.out_buff.value_counts())
 
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 8))
-        gdf_GOES.plot(ax=ax1, x='longitude', y='latitude', kind="scatter", color=gdf_GOES["out_buff"])
-        gdf_MODIS.plot(ax=ax2, x='longitude', y='latitude', kind="scatter", color=gdf_MODIS["out_buff"])
-        gdf_SNPP.plot(ax=ax3, x='longitude', y='latitude', kind="scatter", color=gdf_SNPP["out_buff"])
-        gdf_LS.plot(ax=ax4, x='longitude', y='latitude', kind="scatter", color=gdf_LS["out_buff"])
-        plt.savefig(r'C:\Users\kzammit\Documents\DL-chapter\'outside-buff.png')
-
-
-        print('test')
-
-
-
+        #fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 8))
+        #gdf_GOES.plot(ax=ax1, x='longitude', y='latitude', kind="scatter", color=gdf_GOES["out_buff"])
+        #gdf_MODIS.plot(ax=ax2, x='longitude', y='latitude', kind="scatter", color=gdf_MODIS["out_buff"])
+        #gdf_SNPP.plot(ax=ax3, x='longitude', y='latitude', kind="scatter", color=gdf_SNPP["out_buff"])
+        #gdf_LS.plot(ax=ax4, x='longitude', y='latitude', kind="scatter", color=gdf_LS["out_buff"])
+        #plt.savefig(r'C:\Users\kzammit\Documents\DL-chapter\203-outside-buff.png')
 
         ## GRID DATA
         # https://james-brennan.github.io/posts/fast_gridding_geopandas/
@@ -350,9 +361,6 @@ if __name__ == "__main__":
         #df = pd.DataFrame(grid_gdf)
         #df.to_csv(r'C:\Users\kzammit\Documents\DL-chapter\data.csv')
 
-        # TODO: Add column that is the fraction of hotspots that are "TP" ie within the NBAC buffer
-        # Could also add in NFDB here but would have to pick a different year of fires then (which is ok)
-
         fig, ax = plt.subplots(1, 1, figsize=(10, 8))
         max_plot = grid_gdf['all_hs'].max()
         grid_gdf.plot(column='all_hs', figsize=(12, 8), cmap='inferno',
@@ -362,6 +370,19 @@ if __name__ == "__main__":
         output_path = r'C:\Users\kzammit\Documents\DL-chapter\hotspots-fire-' + str(fire['GID']) + '-grid.png'
         plt.savefig(output_path, bbox_inches='tight')
 
+        grid_gdf['goes_frac'] = grid_gdf['goes_oib']/grid_gdf['goes_hs']
+        grid_gdf['viirs_frac'] = grid_gdf['viirs_oib'] / grid_gdf['viirs_hs']
+        grid_gdf['modis_frac'] = grid_gdf['modis_oib'] / grid_gdf['modis_hs']
+        grid_gdf['ls_frac'] = grid_gdf['ls_oib'] / grid_gdf['ls_hs']
+        grid_gdf['all_frac'] = (grid_gdf[['goes_oib', 'viirs_oib', 'modis_oib', 'ls_oib']].sum(axis=1, min_count=1)/
+                                grid_gdf['all_hs'])
+
+        grid_gdf = grid_gdf.dropna(axis=0, how='all', subset=grid_gdf.columns[1:])
+        grid_clean = grid_gdf.fillna(0)
+
+        all_data = pd.concat([all_data, grid_clean])
+
+    print('test')
 
 
 
