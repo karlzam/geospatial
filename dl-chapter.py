@@ -9,7 +9,22 @@ from pyproj import CRS
 import numpy as np
 import shapely
 from shapely.geometry import box
+from shapely.ops import unary_union
 import math
+
+
+# Helper function to create a GeoDataFrame
+def create_gdf(geometry, crs):
+    return gpd.GeoDataFrame([fire], geometry=[geometry], crs=crs)
+
+
+# Helper function to project and buffer geometries
+def project_and_buffer(gdf, target_epsg, buffer_dist):
+    gdf_projected = gdf.to_crs(target_epsg)
+    gdf_projected['geometry'] = gdf_projected['geometry'].buffer(buffer_dist)
+    gdf_projected = gdf_projected.to_crs(epsg=4326)
+    return gdf_projected
+
 
 def plot_fires():
     # Load the map of Canada (or other region of interest)
@@ -34,7 +49,7 @@ def plot_fires():
 
     # VIIRS
     ca_map_proj.plot(ax=ax2, edgecolor='white', linewidth=1, color='black', zorder=1)
-    fire_buff_viirs.plot(ax=ax2, zorder=2, color='white')
+    fire_buffers['viirs'].plot(ax=ax2, zorder=2, color='white')
     gdf_SNPP.plot(ax=ax2, color='red', zorder=3)
     ax2.set_xlim(float(coords_str.split(',')[0]), float(coords_str.split(',')[2]))
     ax2.set_ylim(float(coords_str.split(',')[1]), float(coords_str.split(',')[3]))
@@ -42,7 +57,7 @@ def plot_fires():
 
     # MODIS
     ca_map_proj.plot(ax=ax3, edgecolor='white', linewidth=1, color='black', zorder=1)
-    fire_buff_modis.plot(ax=ax3, zorder=2, color='white')
+    fire_buffers['modis'].plot(ax=ax3, zorder=2, color='white')
     gdf_MODIS.plot(ax=ax3, color='orange', zorder=3)
     ax3.set_xlim(float(coords_str.split(',')[0]), float(coords_str.split(',')[2]))
     ax3.set_ylim(float(coords_str.split(',')[1]), float(coords_str.split(',')[3]))
@@ -50,7 +65,7 @@ def plot_fires():
 
     # Landsat
     ca_map_proj.plot(ax=ax4, edgecolor='white', linewidth=1, color='black', zorder=1)
-    fire_buff_landsat.plot(ax=ax4, zorder=2, color='white')
+    fire_buffers['landsat'].plot(ax=ax4, zorder=2, color='white')
     gdf_LS.plot(ax=ax4, color='blue', zorder=3)
     ax4.set_xlim(float(coords_str.split(',')[0]), float(coords_str.split(',')[2]))
     ax4.set_ylim(float(coords_str.split(',')[1]), float(coords_str.split(',')[3]))
@@ -58,7 +73,7 @@ def plot_fires():
 
     # GOES
     ca_map_proj.plot(ax=ax5, edgecolor='white', linewidth=1, color='black', zorder=1)
-    fire_buff_goes.plot(ax=ax5, zorder=2, color='white')
+    fire_buffers['goes'].plot(ax=ax5, zorder=2, color='white')
     gdf_GOES.plot(ax=ax5, color='yellow', zorder=3)
     ax5.set_xlim(float(coords_str.split(',')[0]), float(coords_str.split(',')[2]))
     ax5.set_ylim(float(coords_str.split(',')[1]), float(coords_str.split(',')[3]))
@@ -83,6 +98,47 @@ def plot_fires():
     plt.savefig(output_path, bbox_inches='tight')
 
     print(f"Saved plot for fire {fire['GID']} to {output_path}")
+
+
+# Function to add an 'out_buff' column to a GeoDataFrame
+def add_outside_buffer_column(gdf, buffer_gdf, sensor_name):
+    """
+    Adds a column to the GeoDataFrame indicating if geometries are outside the buffer.
+
+    Parameters:
+        gdf (GeoDataFrame): GeoDataFrame of points to check.
+        buffer_gdf (GeoDataFrame): GeoDataFrame of buffer geometries.
+        sensor_name (str): Name of the sensor for logging or debugging.
+
+    Returns:
+        GeoDataFrame: Updated GeoDataFrame with 'out_buff' column.
+    """
+    gdf['out_buff'] = ~gdf['geometry'].apply(lambda geom: buffer_gdf.contains(geom))
+    print(f"Processed {sensor_name} data for outside buffer.")
+    return gdf
+
+# Function to plot data for all sensors
+def plot_outside_buffers(sensor_gdfs, buffer_colors, fire_id, save_dir):
+    """
+    Plots GeoDataFrames with their 'out_buff' status.
+
+    Parameters:
+        sensor_gdfs (dict): Dictionary of sensor GeoDataFrames.
+        buffer_colors (dict): Dictionary of buffer status colors for each sensor.
+        save_path (str): Path to save the resulting figure.
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    sensor_names = list(sensor_gdfs.keys())
+
+    for ax, sensor in zip(axes.flatten(), sensor_names):
+        gdf = sensor_gdfs[sensor]
+        gdf.plot(ax=ax, x='longitude', y='latitude', kind="scatter", color=buffer_colors[sensor])
+        ax.set_title(f"{sensor} Buffer")
+
+    plt.tight_layout()
+    save_path = f"{save_dir}/fire-{fire_id}-outside-buff.png"
+    plt.savefig(save_path)
+    print(f"Plot saved to {save_path}")
 
 
 def process_gridding_and_frp(source_gdf, grid_gdf, source_name, frp_available=True):
@@ -134,8 +190,8 @@ if __name__ == "__main__":
     # Define the fire IDs of interest
     # 341, 345, 348 had other fires too close
     #fire_ids = ['2023_203', '2023_207', '2023_854', '2023_834', '2023_366', '2023_897', '2023_858']
-    # 366 has better examples of hs inside/outside buffer
-    fire_ids = ['2023_203', '2023_854']
+    # 366 has better examples of hs inside/outside buffer BUT is the longest to run
+    fire_ids = ['2023_203', '2023_207', '2023_854', '2023_834', '2023_897', '2023_858']
 
     # Load the shapefile containing fire data
     # TODO: Check if NBAC times are in UTC
@@ -148,12 +204,6 @@ if __name__ == "__main__":
     # Filter for the fires of interest
     nbac_filtered = nbac[nbac['GID'].isin(fire_ids)].copy()
     nbac_filtered = nbac_filtered.reset_index()
-
-    # Use outside of NBAC perimeter (ie. created polygon boundary instead of multipolygon)
-    # This breaks the bounding box statement, let's figure out why
-
-    # Add a column with bounding box coordinates for each fire (based on the outside of the nbac)
-    #nbac_filtered['bbox_coords'] = nbac_filtered['geometry'].apply(lambda geom: geom.bounds)
 
     # Determine utm zone for each fire (for buffering and projection)
     centroids = nbac_filtered['geometry'].centroid
@@ -183,13 +233,6 @@ if __name__ == "__main__":
       # possible error, wrong MAP_KEY value, check for extra quotes, missing letters
       print ("There is an issue with the query. \nTry in your browser: %s" % url)
 
-    # Set buffer distances for each source
-    viirs_buf_dist = math.sqrt(2)*375
-    landsat_buf_dist = math.sqrt(2)*30
-    modis_buf_dist = math.sqrt(2)*1000
-    # TODO: Something up with GOES buffer
-    goes_buf_dist = math.sqrt(2)*4000
-
     # Loop over each fire in the filtered dataset
     all_data = gpd.GeoDataFrame()
 
@@ -200,32 +243,32 @@ if __name__ == "__main__":
         # Get the appropriate UTM CRS for this fire based on its centroid
         crs = crs_list[idx]
 
-        # TODO: This doesn't work for multipolygon but can't do it before or else it does all fires within the pull
-        fire['geometry'] = fire['geometry'].union_all().convex_hull
+        # Create GeoDataFrames for the original and union geometries
+        fire_gdf = create_gdf(fire['geometry'], nbac_filtered.crs)
+        fire_union_gdf = create_gdf(unary_union(fire['geometry']).convex_hull, nbac_filtered.crs)
 
-        # Project the entire fire geometry to the corresponding UTM CRS (determined above)
-        fire_gdf = gpd.GeoDataFrame([fire], geometry=[fire['geometry']],
-                                    crs=nbac_filtered.crs)  # Create a temporary GeoDataFrame in 4326
+        # Define the target CRS and buffer distances
+        target_epsg = crs.to_epsg()
+        buffer_distances = {
+            "viirs": math.sqrt(2)*375,
+            "modis": math.sqrt(2)*1000,
+            "landsat": math.sqrt(2)*30,
+            "goes": math.sqrt(2)*4000
+        }
 
-        #fire_gdf = fire_gdf.drop('bbox_coords', axis=1)
+        # Project and buffer for each dataset
+        fire_buffers = {}
+        fire_union_buffers = {}
 
-        # project the temp gdf to the corresponding epsg for buffering
-        fire_proj_viirs = fire_gdf.to_crs(crs.to_epsg())
-        fire_proj_modis = fire_gdf.to_crs(crs.to_epsg())
-        fire_proj_landsat = fire_gdf.to_crs(crs.to_epsg())
-        fire_proj_goes = fire_gdf.to_crs(crs.to_epsg())
+        for sensor, buffer_dist in buffer_distances.items():
+            fire_buffers[sensor] = project_and_buffer(fire_gdf, target_epsg, buffer_dist)
+            fire_union_buffers[sensor] = project_and_buffer(fire_union_gdf, target_epsg, buffer_dist)
 
-        # Create a buffer around the fire geometry
-        fire_proj_viirs['geometry'] = fire_proj_viirs['geometry'].buffer(viirs_buf_dist)
-        fire_proj_modis['geometry'] = fire_proj_modis['geometry'].buffer(modis_buf_dist)
-        fire_proj_landsat['geometry'] = fire_proj_landsat['geometry'].buffer(landsat_buf_dist)
-        fire_proj_goes['geometry'] = fire_proj_goes['geometry'].buffer(goes_buf_dist)
-
-        # Convert back to the original CRS (WGS 84 / EPSG:4326)
-        fire_buff_viirs = fire_proj_viirs.to_crs(epsg=4326)
-        fire_buff_modis = fire_proj_modis.to_crs(epsg=4326)
-        fire_buff_landsat = fire_proj_landsat.to_crs(epsg=4326)
-        fire_buff_goes = fire_proj_goes.to_crs(epsg=4326)
+        # plot example so I know it did the right thing
+        #fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        #fire_union_buffers['viirs'].plot(ax=ax, color='black')
+        #fire_buffers['viirs'].plot(ax=ax, color='blue')
+        #plt.savefig(r'C:\Users\kzammit\Documents\DL-chapter\different-buffers-unionvsnot.png')
 
         # Convert fire start and end dates to datetime objects
         end_date = dt.datetime.strptime(fire['HS_EDATE'], "%Y/%m/%d").date()
@@ -241,8 +284,7 @@ if __name__ == "__main__":
 
         # Get the bounding box coordinates for the current fire using the largest perimeter
         # Add a column with bounding box coordinates for each fire (based on the outside of the nbac)
-        # THIS DOES NOT WORK WITH POLYGON!!!! THIS WAS THE ERROR ALL ALONG :((((
-        bbox_coords = fire_buff_modis['geometry'].bounds
+        bbox_coords = fire_union_buffers['goes']['geometry'].bounds
         bbox_coords = bbox_coords.reset_index(drop=True)
         coords_str = f"{bbox_coords['minx'][0]},{bbox_coords['miny'][0]},{bbox_coords['maxx'][0]},{bbox_coords['maxy'][0]}"
 
@@ -294,45 +336,55 @@ if __name__ == "__main__":
         gdf_LS['instrument'] = 'OLI'
 
         # This plots the 6 panel
-        plot_fires()
-
-        print('test')
+        #plot_fires()
 
         # Let's plot the hotspots on a map but colour by scan and track values
         # gdf_GOES.plot.scatter(x='scan', y='track')
         # gdf_GOES.plot(x='longitude', y='latitude', kind="scatter", color=gdf_GOES["track"])
         # gdf_GOES.plot(x='longitude', y='latitude', kind="scatter", color=gdf_GOES["scan"])
 
-        print('test')
+        # Add the 'out_buff' column to each GeoDataFrame
+        sensor_buffers = {
+            "landsat": fire_union_buffers["landsat"],
+            "modis": fire_union_buffers["modis"],
+            "viirs": fire_union_buffers["viirs"],
+            "goes": fire_union_buffers["goes"]
+        }
 
-        # Add column for each dataframe that determines which spots are outside their corresponding buffers
-        gdf_LS['out_buff'] = ~gdf_LS['geometry'].apply(lambda geom: fire_buff_landsat.contains(geom))
-        print(gdf_LS.out_buff.value_counts())
-        gdf_MODIS['out_buff'] = ~gdf_MODIS['geometry'].apply(lambda geom: fire_buff_modis.contains(geom))
-        print(gdf_MODIS.out_buff.value_counts())
-        gdf_SNPP['out_buff'] = ~gdf_SNPP['geometry'].apply(lambda geom: fire_buff_viirs.contains(geom))
-        print(gdf_SNPP.out_buff.value_counts())
-        gdf_GOES['out_buff'] = ~gdf_GOES['geometry'].apply(lambda geom: fire_buff_goes.contains(geom))
-        print(gdf_GOES.out_buff.value_counts())
+        sensor_gdfs = {
+            "landsat": add_outside_buffer_column(gdf_LS, sensor_buffers["landsat"], "Landsat"),
+            "modis": add_outside_buffer_column(gdf_MODIS, sensor_buffers["modis"], "MODIS"),
+            "viirs": add_outside_buffer_column(gdf_SNPP, sensor_buffers["viirs"], "SNPP"),
+            "goes": add_outside_buffer_column(gdf_GOES, sensor_buffers["goes"], "GOES")
+        }
 
-        #fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 8))
-        #gdf_GOES.plot(ax=ax1, x='longitude', y='latitude', kind="scatter", color=gdf_GOES["out_buff"])
-        #gdf_MODIS.plot(ax=ax2, x='longitude', y='latitude', kind="scatter", color=gdf_MODIS["out_buff"])
-        #gdf_SNPP.plot(ax=ax3, x='longitude', y='latitude', kind="scatter", color=gdf_SNPP["out_buff"])
-        #gdf_LS.plot(ax=ax4, x='longitude', y='latitude', kind="scatter", color=gdf_LS["out_buff"])
-        #plt.savefig(r'C:\Users\kzammit\Documents\DL-chapter\203-outside-buff.png')
+        # Plot the results
+        buffer_colors = {
+            "landsat": gdf_LS["out_buff"],
+            "modis": gdf_MODIS["out_buff"],
+            "viirs": gdf_SNPP["out_buff"],
+            "goes": gdf_GOES["out_buff"]
+        }
+
+        plot_outside_buffers(sensor_gdfs, buffer_colors, fire['NFIREID'], r'C:\Users\kzammit\Documents\DL-chapter')
 
         ## GRID DATA
         # https://james-brennan.github.io/posts/fast_gridding_geopandas/
 
         # Update this so it uses the goes bounds for now (with no buffer)
-        xmin, ymin, xmax, ymax = fire_proj_goes.total_bounds
+        fire_buff_proj = fire_union_buffers['goes'].to_crs(target_epsg)
+        xmin, ymin, xmax, ymax = fire_buff_proj.total_bounds
 
+        # TODO: Determine the number of cells based on the GOES resolution
+        # TODO: Tried this before but the grid cell size of 4000 made one massive cell
         # Define the number of grid cells
         #n_cells = 30
         #cell_size = (xmax - xmin) / n_cells  # Size of each grid cell
         # Not sure if this is the right thing to do - look at other script for calculating pixel size based on math
         # and see if it's accurate
+        # Below would determine the actual pixel size assuming that the track and scan are in m
+        # I don't think this relationship is true...
+        #cell_size = (gdf_GOES['track'].max()/1000) * ((gdf_GOES.iloc[gdf_GOES['track'].idxmax()]['scan'])/1000)
         cell_size = gdf_GOES['track'].max()
 
         # Create grid cells as shapely boxes
@@ -345,16 +397,23 @@ if __name__ == "__main__":
                 grid_cells.append(box(x0, y0, x1, y1))
 
         # Convert grid cells to a GeoDataFrame
-        grid_gdf = gpd.GeoDataFrame(grid_cells, columns=['geometry'], crs=fire_proj_goes.crs)
-        grid_gdf = grid_gdf.to_crs(epsg=4326)
+        #grid_gdf = gpd.GeoDataFrame(grid_cells, columns=['geometry'], crs=fire_union_buffers['goes'].crs)
+        grid_gdf = gpd.GeoDataFrame(grid_cells, columns=['geometry'], crs=target_epsg)
+        #grid_gdf = grid_gdf.to_crs(epsg=4326)
+        #grid_gdf = grid_gdf.to_crs(target_epsg)
+
+        gdf_GOES_proj = gdf_GOES.to_crs(target_epsg)
+        gdf_MODIS_proj = gdf_MODIS.to_crs(target_epsg)
+        gdf_SNPP_proj = gdf_SNPP.to_crs(target_epsg)
+        gdf_LS_proj = gdf_LS.to_crs(target_epsg)
 
         # Currently forcing all frp avail to be false so it doesn't calculate that row
         # Piyush made a good point that right now I'm doing for the entire fire and for different sources so it
         # doesn't make a ton of sense to sum frp in this way
-        grid_gdf = process_gridding_and_frp(gdf_GOES, grid_gdf, 'goes', frp_available=False)
-        grid_gdf = process_gridding_and_frp(gdf_SNPP, grid_gdf, 'viirs', frp_available=False)
-        grid_gdf = process_gridding_and_frp(gdf_MODIS, grid_gdf, 'modis', frp_available=False)
-        grid_gdf = process_gridding_and_frp(gdf_LS, grid_gdf, 'ls', frp_available=False)
+        grid_gdf = process_gridding_and_frp(gdf_GOES_proj, grid_gdf, 'goes', frp_available=False)
+        grid_gdf = process_gridding_and_frp(gdf_SNPP_proj, grid_gdf, 'viirs', frp_available=False)
+        grid_gdf = process_gridding_and_frp(gdf_MODIS_proj, grid_gdf, 'modis', frp_available=False)
+        grid_gdf = process_gridding_and_frp(gdf_LS_proj, grid_gdf, 'ls', frp_available=False)
         grid_gdf['all_hs'] = grid_gdf[['goes_hs', 'viirs_hs', 'modis_hs', 'ls_hs']].sum(axis=1, min_count=1)
 
         #grid_gdf = grid_gdf.fillna(0)
@@ -380,9 +439,10 @@ if __name__ == "__main__":
         grid_gdf = grid_gdf.dropna(axis=0, how='all', subset=grid_gdf.columns[1:])
         grid_clean = grid_gdf.fillna(0)
 
-        all_data = pd.concat([all_data, grid_clean])
+        grid_df = pd.DataFrame(grid_clean)
+        grid_df_clean = grid_df.drop(['geometry'], axis=1)
 
-    print('test')
+        all_data = pd.concat([all_data, grid_df_clean], ignore_index=True)
 
-
+    all_data.to_csv(r'C:\Users\kzammit\Documents\DL-chapter\fire-data.csv')
 
