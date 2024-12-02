@@ -19,3 +19,6 @@ scan and track values are in - I found info for other sources that scan is the s
 of the scan, so I'm assuming it's in m's for the 4000+ values to make sense, but this is odd as the rest of the data
 for all of the sources is in m's. But it can't be scan x track = surface area? Currently using just the largest track 
 val
+
+6. In an LSTM, it looks like there's always a sigmoid and tanh function within the 4 layers within each node. Does the 
+keras version of the LSTM layer follow this? 
