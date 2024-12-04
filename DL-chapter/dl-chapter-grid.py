@@ -1,3 +1,9 @@
+# This version of the script creates a grid, where the hotspots are acclimated by grid cell
+# and the total fraction of true and false positives within each grid cell determined
+
+# This wasn't the goal, as you need the buffer to be able to predict anything with this so question 3
+# needs to be re-thought out
+
 import geopandas as gpd
 import pandas as pd
 import datetime as dt
