@@ -23,7 +23,7 @@ import math
 ###### User Inputs ######
 
 # Obtained from: https://cwfis.cfs.nrcan.gc.ca/downloads/nbac/
-nbac_shp = r'C:\Users\kzammit\Documents\shp\nbac\nbac_2023_20240530.shp'
+nbac_shp = r'C:\Users\kzammit\Documents\shp\nbac\nbac_2022_20240530.shp'
 
 # At the time of writing this script, NFDB polygons were not available for 2023
 # Obtained from: https://cwfis.cfs.nrcan.gc.ca/datamart/download/nfdbpnt
@@ -37,12 +37,12 @@ pers_hs_shp = r'C:\Users\kzammit\Documents\shp\pers-hs\m3mask5_lcc.shp'
 nat_earth_shp = r'C:\Users\kzammit\Documents\shp\nat-earth\ne_10m_admin_0_countries.shp'
 
 # Date to focus analysis on (training used 2023, val used 2022)
-doi = '2023/09/23'
-yoi = 2023
+doi = '2022/09/23'
+yoi = 2022
 
 # FIRMS may key to use API
 FIRMS_map_key = 'e865c77bb60984ab516517cd4cdadea0'
-doi_firms = '2023-09-23'
+doi_firms = '2022-09-23'
 
 # Buffer distance
 buffer_dist = 375*math.sqrt(2)
@@ -227,7 +227,15 @@ elif num_fp > num_tp:
 
 df = pd.concat([fp_sample, tp_sample])
 
-df.to_excel(r'C:\Users\kzammit\Documents\DL-chapter\train.xlsx', index=False)
+# Drop non-numeric columns
+df = df.drop(['acq_date', 'satellite', 'instrument', 'version'], axis=1)
+
+# Change day and night into 1 (day) and 0 (night), and also sat into 1 (snpp) and 0 (noaa20)
+df['daynight'] = df['daynight'].replace({'D': 1, 'N': 0})
+df['sat'] = df['sat'].replace({'SNPP': 1, 'NOAA20': 0})
+df['confidence'] = df['confidence'].replace({'l': 0, 'n': 1, 'h': 2})
+
+df.to_excel(r'C:\Users\kzammit\Documents\DL-chapter\val.xlsx', index=False)
 
 
 
