@@ -191,11 +191,15 @@ if __name__ == "__main__":
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 8))
     cm = confusion_matrix(y_test, predicted_classes)
-    sns.heatmap(ax=ax, data=cm, annot=True, fmt='g')
+    sns.heatmap(cm / np.sum(cm), annot=True,
+                fmt='.2%', cmap='Blues')
+    #sns.heatmap(ax=ax, data=cm, annot=True, fmt='g')
     plt.title('BNN \nAccuracy:{0:.3f}'.format(accuracy_score(y_test, predicted_classes)))
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
     plt.savefig(proj_dir + '\\' + 'conf-mat.png')
+
+
 
     print('test')
 
