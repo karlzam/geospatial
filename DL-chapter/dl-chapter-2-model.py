@@ -55,8 +55,7 @@ def create_model_inputs():
     return inputs
 
 
-# CHANGED FROM REGRESSION TO CLASSIFICATION TASK
-def create_probablistic_bnn_model(train_size):
+def create_bnn_model(train_size):
 
     # For each column, it creates a keras tensor like this:
     # <KerasTensor: shape=(None, 1) dtype=float32 (created by layer 'acq_time')>
@@ -90,8 +89,49 @@ def create_probablistic_bnn_model(train_size):
     return model
 
 
-def run_experiment(model, loss, metrics, X_train, X_test, y_train, y_test):
+# CHANGED FROM REGRESSION TO CLASSIFICATION TASK
+def create_probablistic_bnn_model(train_size):
+
+    # For each column, it creates a keras tensor like this:
+    # <KerasTensor: shape=(None, 1) dtype=float32 (created by layer 'acq_time')>
+    inputs = create_model_inputs()
+
+    # Create one keras tensor for all inputs
+    features = tf_keras.layers.concatenate(list(inputs.values())) # KZ: updated from keras
+    features = tf_keras.layers.BatchNormalization()(features) # KZ: Updated from layers to tf_keras.layers
+    # Create hidden layers with weight uncertainty using the DenseVariational layer.
+    hidden_units = [8,8]
+
+    for units in hidden_units:
+        features = tfp.layers.DenseVariational(
+            units=units,
+            make_prior_fn=prior,
+            make_posterior_fn=posterior,
+            kl_weight=1 / train_size,
+            activation="relu", # KZ changed from sigmoid
+        )(features)
+
+    # Create a probabilistic output (Normal distribution), and use the `Dense` layer
+    # to produce the parameters of the distribution.
+    # We set units=2 to learn both the mean and the variance of the Normal distribution.
+    #distribution_params = tf_keras.layers.Dense(units=2)(features) # KZ: Updated from layers.Dense to tf_keras.layers
+    #outputs = tfp.layers.IndependentBernoulli(1)(distribution_params)
+
+    #logits = tf_keras.layers.Dense(units=1)(features)
+
+    #outputs = tfp.layers.IndependentBernoulli(event_shape=1, convert_to_tensor_fn=tfp.distributions.Bernoulli.logits)(
+    #    logits)
+
+    logits = tf_keras.layers.Dense(units=1)(features)
+    outputs = tfp.layers.IndependentBernoulli(event_shape=1)(logits)
+
+    model = tf_keras.Model(inputs=inputs, outputs=outputs) # KZ: Updated from keras.Model to tf_keras.Model
+    return model
+
+
+def run_experiment(model, loss, metrics, epochs, X_train, X_test, y_train, y_test):
     # Compile the model
+
     model.compile(optimizer='adam', loss=loss, metrics=metrics)
 
     X_train_format = {str(feature_names[i]): X_train[:, i] for i in range(X_train.shape[1])}
@@ -102,7 +142,7 @@ def run_experiment(model, loss, metrics, X_train, X_test, y_train, y_test):
         x=X_train_format,
         y=y_train,
         batch_size=32,
-        epochs=60,
+        epochs=epochs,
         #validation_data=(X_test_format, y_test)
         validation_split = 0.2
     )
@@ -151,12 +191,12 @@ if __name__ == "__main__":
     #train_size = X_train_scaled.shape[0]
     train_size = X_train.shape[0]
 
-    model = create_probablistic_bnn_model(train_size)
+    model = create_bnn_model(train_size)
 
     #model, train_loss, val_loss = run_experiment(model, 'binary_crossentropy', ['accuracy'],
     #                                             X_train_scaled, X_test_scaled, y_train, y_test)
 
-    model, train_loss, val_loss = run_experiment(model, 'binary_crossentropy', ['accuracy'],
+    model, train_loss, val_loss = run_experiment(model, 'binary_crossentropy', ['accuracy'], 80,
                                                  X_train, X_test, y_train, y_test)
 
     plt.figure(figsize=(10, 6))
@@ -199,7 +239,90 @@ if __name__ == "__main__":
     plt.xlabel('Predicted label')
     plt.savefig(proj_dir + '\\' + 'conf-mat.png')
 
+    def compute_predictions(model, iterations=100):
+        predicted = []
+        for _ in range(iterations):
+            predicted.append(model(examples).numpy())
+        predicted = np.concatenate(predicted, axis=1)
 
+        prediction_mean = np.mean(predicted, axis=1).tolist()
+        prediction_min = np.min(predicted, axis=1).tolist()
+        prediction_max = np.max(predicted, axis=1).tolist()
+        prediction_range = (np.max(predicted, axis=1) - np.min(predicted, axis=1)).tolist()
+
+        for idx in range(10):
+            print(
+                f"Predictions mean: {round(prediction_mean[idx], 2)}, "
+                f"min: {round(prediction_min[idx], 2)}, "
+                f"max: {round(prediction_max[idx], 2)}, "
+                f"range: {round(prediction_range[idx], 2)} - "
+                f"Actual: {y_val[idx]}"
+            )
+
+
+    compute_predictions(model)
+
+    model_2 = create_probablistic_bnn_model(train_size)
+
+
+    def negative_loglikelihood(targets, estimated_distribution):
+        return -estimated_distribution.log_prob(targets)
+
+    model2, train_loss_2, val_loss_2 = run_experiment(model=model_2,
+                                                      #loss=tf_keras.losses.BinaryCrossentropy(from_logits=False),
+                                                      loss=negative_loglikelihood,
+                                                      metrics=['accuracy'],
+                                                      epochs=150,
+                                                      X_train=X_train, X_test=X_test,
+                                                      y_train=y_train, y_test=y_test)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(train_loss_2, label='Training Loss', marker='o')
+    plt.plot(val_loss_2, label='Validation Loss', marker='o')
+    plt.title('Training and Validation Loss Over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid()
+    plt.savefig(proj_dir + '\\' + 'loss-curve-prob.png')
+
+    examples = {str(feature_names[i]): X_test[:, i] for i in range(X_test.shape[1])}
+
+    prediction_distribution = model2(examples)
+    prediction_mean = prediction_distribution.mean().numpy().tolist()
+    prediction_stdv = prediction_distribution.stddev().numpy()
+
+    # The 95% CI is computed as mean ± (1.96 * stdv)
+    upper = (prediction_mean + (1.96 * prediction_stdv)).tolist()
+    lower = (prediction_mean - (1.96 * prediction_stdv)).tolist()
+    prediction_stdv = prediction_stdv.tolist()
+
+    for idx in range(10):
+        print(
+            f"Prediction mean: {round(prediction_mean[idx][0], 2)}, "
+            f"stddev: {round(prediction_stdv[idx][0], 2)}, "
+            f"95% CI: [{round(upper[idx][0], 2)} - {round(lower[idx][0], 2)}]"
+            f" - Actual: {y_test[idx]}"
+        )
+
+    examples = {str(feature_names[i]): X_test[:, i] for i in range(X_test.shape[1])}
+
+    # TensorCoercible
+    prediction_distribution = model2(examples)
+    prediction_mean = prediction_distribution.mean().numpy().tolist()
+    predicted_classes = (np.array(prediction_mean) >= 0.5).astype(int)
+    #print(predicted_classes)
+    #print(y_val)
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    cm = confusion_matrix(y_test, predicted_classes)
+    sns.heatmap(cm / np.sum(cm), annot=True,
+                fmt='.2%', cmap='Blues')
+    #sns.heatmap(ax=ax, data=cm, annot=True, fmt='g')
+    plt.title('BNN \nAccuracy:{0:.3f}'.format(accuracy_score(y_test, predicted_classes)))
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+    plt.savefig(proj_dir + '\\' + 'conf-mat-prob.png')
 
     print('test')
 
