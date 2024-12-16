@@ -1,17 +1,10 @@
-import math
+import matplotlib.pyplot as plt
+import rioxarray
 
-import numpy as np
 
-a = np.array([[1,1,1,1], [1,1,1,1], [1,1,1,1]])
-print(a.shape)
+dob_tiff = rioxarray.open_rasterio(r'C:\Users\kzammit\Documents\CFSDS\CFSDS_example_Nov2023\firearrival_decimal_krig.tif', masked=True)
 
-b = np.array([[1], [1], [1], [1]])
-print(b.shape)
+fig, ax1 = plt.subplots(1, 1, figsize=(20, 10), sharex=True, sharey=True)
+dob_tiff.plot(cmap='viridis', ax=ax1)
 
-c = a*b.T
-
-print(c)
-
-L = 1*math.log(0.9)
-
-print(L)
+plt.savefig(r'C:\Users\kzammit\Documents\CFSDS\CFSDS_example_Nov2023\tiff-plot.png')
