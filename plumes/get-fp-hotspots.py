@@ -2,13 +2,9 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from datetime import datetime
-import matplotlib.patches as mpatches
-import shapefile as shp
 import numpy as np
-from shapely.geometry import box
-import math
-from shapely.geometry import Point
-from shapely.ops import nearest_points
+from networkx import Graph, connected_components
+from scipy.spatial import cKDTree
 
 
 ###### User Inputs ######
@@ -217,12 +213,11 @@ fp = fp.to_crs(epsg=3978)
 tp = tp.to_crs(epsg=3978)
 
 # From here: https://gis.stackexchange.com/questions/222315/finding-nearest-point-in-other-geodataframe-using-geopandas
-from scipy.spatial import cKDTree
-from shapely.geometry import Point
 def ckdnearest(gdA, gdB):
 
     nA = np.array(list(gdA.geometry.apply(lambda x: (x.x, x.y))))
     nB = np.array(list(gdB.geometry.apply(lambda x: (x.x, x.y))))
+    # Documentation explains this is a kd-tree for quick nearest neighbour lookup
     btree = cKDTree(nB)
     dist, idx = btree.query(nA, k=1)
 
@@ -245,8 +240,9 @@ fp_w_flag = ckdnearest(fp, tp)
 
 fp_w_flag = fp_w_flag.dropna(axis=1, how='all')
 
-# reset the perim_source to none if farther than 1000 m
-fp_w_flag.loc[fp_w_flag['dist'] > 2000, 'perim-source'] = "NONE"
+# reset the perim_source to none if farther than 2000 m
+max_distance = 2000
+fp_w_flag.loc[fp_w_flag['dist'] > max_distance, 'perim-source'] = "NONE"
 
 NBAC_fp = fp_w_flag[fp_w_flag['perim-source']=='NBAC']
 NBAC_fp = NBAC_fp.dropna(axis=1, how='all')
@@ -260,59 +256,112 @@ pers_hs_fp = pers_hs_fp.dropna(axis=1, how='all')
 none_fp = fp_w_flag[fp_w_flag['perim-source']=='NONE']
 none_fp = none_fp.dropna(axis=1, how='all')
 
-# TODO: STOPPED HERE
+if len(NBAC_fp) >= 1:
+    for idx, fire in enumerate(NBAC_fp['NBAC-ID'].unique()):
+
+        temp_df = NBAC_fp[NBAC_fp['NBAC-ID']== fire]
+        NBAC_perim = nbac_buff[nbac_buff['NFIREID']==fire]
+
+        temp_df = temp_df.to_crs(epsg=3978)
+        NBAC_perim = NBAC_perim.to_crs(epsg=3978)
+
+        fig, ax = plt.subplots(figsize=(10,8))
+        NBAC_perim.plot(ax=ax, color='black')
+        temp_df.plot(ax=ax, color='red')
+        plt.title('NBAC ID: ' + str(fire))
+        plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + 'NBAC-' + str(fire) + '.png')
+        plt.close()
+
+if len(pers_hs_fp) >= 1:
+    for idx, fire in enumerate(pers_hs_fp['PH-ID'].unique()):
+
+        temp_df = pers_hs_fp[pers_hs_fp['PH-ID']== fire]
+        pers_hs_perim = pers_hs_cad_buff[pers_hs_cad_buff['gid']==fire]
+
+        temp_df = temp_df.to_crs(epsg=3978)
+        pers_hs_perim = pers_hs_perim.to_crs(epsg=3978)
+
+        fig, ax = plt.subplots(figsize=(10,8))
+        pers_hs_perim.plot(ax=ax, color='black')
+        temp_df.plot(ax=ax, color='red')
+        plt.title('Pers HS ID: ' + str(fire))
+        plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + 'pers-hs-' + str(fire) + '.png')
+        plt.close()
+
+if len(NFDB_fp) >= 1:
+    for idx, fire in enumerate(NFDB_fp['NFDB-ID'].unique()):
+
+        temp_df = NFDB_fp[NFDB_fp['NFDB-ID']== fire]
+        nfdb_perim = nfdb_buff[nfdb_buff['NFDBFIREID']==fire]
+
+        temp_df = temp_df.to_crs(epsg=3978)
+        nfdb_perim = nfdb_perim.to_crs(epsg=3978)
+
+        fig, ax = plt.subplots(figsize=(10,8))
+        nfdb_perim.plot(ax=ax, color='black')
+        temp_df.plot(ax=ax, color='red')
+        plt.title('NFDB ID: ' + str(fire))
+        plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + 'NFDB-' + str(fire) + '.png')
+        plt.close()
+
+if len(none_fp) >= 1:
+
+    # currently this results in a lot of duplicates because some of the points are outside of the max distance
+    # from eachother within the same cluster... how to get around this?
+
+    # clump them together in minimum groups of 6 determined by the max distance
+    none_fp = none_fp.to_crs(epsg=3978)
+    none_fp = none_fp.reset_index()
+    buffers = none_fp.geometry.buffer(max_distance)
+
+    # Create an empty list to store intersections
+    intersections = []
+
+    # Perform pairwise intersection checks
+    for i in range(len(buffers)):
+        for j in range(i + 1, len(buffers)):  # Only check upper triangle (avoid duplicates)
+            if buffers.iloc[i].intersects(buffers.iloc[j]):
+                intersections.append((i, j))
+
+    # create a dataframe of intersections
+    int_df = pd.DataFrame(intersections)
+
+    # add another step here that checks if ANY of the points within the cluster are within the max distance
+    # if the index val within a cluster is also within another cluster, merge them
+    # Using networkx package in python which does network analysis
+    graph = Graph()
+    for _, group in int_df.groupby(0):
+        values = group[1].tolist()
+        for i in range(len(values)):
+            for j in range(i + 1, len(values)):
+                graph.add_edge(values[i], values[j])
+
+    components = connected_components(graph)
+    merged_groups = [set(component) for component in components]
+
+    for idx, fire in enumerate(merged_groups):
+
+        # get rows with these indices from none_fp
+        df_temp = none_fp.loc[list(merged_groups[idx])]
+
+        if len(df_temp) > 3:
+
+            df_temp = df_temp.to_crs(epsg=3978)
+
+            fig, ax = plt.subplots(figsize=(10, 8))
+            df_temp.plot(ax=ax, color='red')
+            plt.title('Cluster #: ' + str(idx))
+            plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + 'cluster-' + str(idx) + '.png')
+            plt.close()
 
 
-NBAC_fp_fires = fp_w_flag['NFIREID'].unique()
-NBAC_fp_fires = NBAC_fp_fires[~np.isnan(NBAC_fp_fires)]
-
-pers_hs_fp_fires = fp_w_flag['GID'].unique()
-pers_hs_fp_fires = pers_hs_fp_fires[~np.isnan(pers_hs_fp_fires)]
-
-NFDB_fp_fires = fp_w_flag[fp_w_flag['perim-source']=='NFDB']
-
-for idx, fire in enumerate(NBAC_fp_fires):
-
-    temp_df = fp_w_flag[fp_w_flag['NFIREID']== fire]
-    NBAC_perim = nbac_buff[nbac_buff['NFIREID']==fire]
-
-    temp_df = temp_df.to_crs(epsg=3978)
-    NBAC_perim = NBAC_perim.to_crs(epsg=3978)
-
-    fig, ax = plt.subplots(figsize=(10,8))
-    NBAC_perim.plot(ax=ax, color='black')
-    temp_df.plot(ax=ax, color='red')
-    plt.title('NBAC ID: ' + str(fire))
-    plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + 'NBAC-' + str(fire) + '.png')
-
-for idx, fire in enumerate(pers_hs_fp_fires):
-
-    temp_df = fp_w_flag[fp_w_flag['gid']== fire]
-    pers_hs_perim = pers_hs_cad_buff[pers_hs_cad_buff['gid']==fire]
-
-    temp_df = temp_df.to_crs(epsg=3978)
-    pers_hs_perim = pers_hs_perim.to_crs(epsg=3978)
-
-    fig, ax = plt.subplots(figsize=(10,8))
-    pers_hs_perim.plot(ax=ax, color='black')
-    temp_df.plot(ax=ax, color='red')
-    plt.title('Pers HS ID: ' + str(fire))
-    plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + 'pers-hs-' + str(fire) + '.png')
-
-for idx, fire in enumerate(NFDB_fp_fires):
-
-    print('test')
-
-    temp_df = fp_w_flag[fp_w_flag[''] == fire]
+# TODO: Save clustered points with corresponding ID's into one dataframe
+# TODO: Add bounding box around the clusters for plotting imagery
+# TODO: Add a flag for each hot spot if it had a high scan angle
+# TODO: Add flag for if it's on the E or W of the closest TP
 
 
-    print('test')
 
 
-# Add a flag for if it has a high scan angle
-# Add a flag for if it's on the E ow W of the closest TP
-
-
-print('test')
 
 
