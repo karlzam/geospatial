@@ -195,14 +195,23 @@ df_hotspots = pd.concat([gdf_SNPP, gdf_NOAA20])
 
 ### flag hotspots outside of boundaries
 tp_fp_flags = gpd.sjoin(df_hotspots, df_perims, predicate='within', how='left')
-tp_fp_flags ['Class'] = 1
-tp_fp_flags.loc[tp_fp_flags .index_right0.isnull(), 'Class'] = 0
 
-print('The number of false positives is ' + str(tp_fp_flags.Class[tp_fp_flags.Class == 0].count()))
+col_index = tp_fp_flags.columns.get_loc('index_right0')
+tp_fp_flags_sub = tp_fp_flags.iloc[:, 0:col_index+1]
+
+tp_fp_flags_sub['NBAC-ID'] = tp_fp_flags['NFIREID']
+tp_fp_flags_sub['PH-ID'] = tp_fp_flags['gid']
+tp_fp_flags_sub['NFDB-ID'] = tp_fp_flags['NFDBFIREID']
+tp_fp_flags_sub['perim-source'] = tp_fp_flags['perim-source']
+
+tp_fp_flags_sub['Class'] = 1
+tp_fp_flags_sub.loc[tp_fp_flags_sub.index_right0.isnull(), 'Class'] = 0
+
+print('The number of false positives is ' + str(tp_fp_flags_sub.Class[tp_fp_flags_sub.Class == 0].count()))
 
 # Add a column that identifies the closest TP
-tp = tp_fp_flags[tp_fp_flags['Class']==1]
-fp = tp_fp_flags[tp_fp_flags['Class']==0]
+tp = tp_fp_flags_sub[tp_fp_flags_sub['Class']==1]
+fp = tp_fp_flags_sub[tp_fp_flags_sub['Class']==0]
 
 fp = fp.to_crs(epsg=3978)
 tp = tp.to_crs(epsg=3978)
@@ -216,8 +225,10 @@ def ckdnearest(gdA, gdB):
     nB = np.array(list(gdB.geometry.apply(lambda x: (x.x, x.y))))
     btree = cKDTree(nB)
     dist, idx = btree.query(nA, k=1)
+
+    # Keep the geometry column from gdA which is TP's
     gdB_nearest = gdB.iloc[idx].drop(columns="geometry").reset_index(drop=True)
-    cols_to_append = ['NFIREID', 'perim-source', 'gid']
+    cols_to_append = ['perim-source', 'NBAC-ID', 'NFDB-ID', 'PH-ID']
     gdf = pd.concat(
         [
             gdA.reset_index(drop=True),
@@ -230,9 +241,35 @@ def ckdnearest(gdA, gdB):
     return gdf
 
 fp_w_flag = ckdnearest(fp, tp)
+#fp_w_flag = fp_w_flag.dropna(axis=1, how='all')
+
 fp_w_flag = fp_w_flag.dropna(axis=1, how='all')
+
+# reset the perim_source to none if farther than 1000 m
+fp_w_flag.loc[fp_w_flag['dist'] > 2000, 'perim-source'] = "NONE"
+
+NBAC_fp = fp_w_flag[fp_w_flag['perim-source']=='NBAC']
+NBAC_fp = NBAC_fp.dropna(axis=1, how='all')
+
+NFDB_fp = fp_w_flag[fp_w_flag['perim-source']=='NFDB']
+NFDB_fp = NFDB_fp.dropna(axis=1, how='all')
+
+pers_hs_fp = fp_w_flag[fp_w_flag['perim-source']=='PH']
+pers_hs_fp = pers_hs_fp.dropna(axis=1, how='all')
+
+none_fp = fp_w_flag[fp_w_flag['perim-source']=='NONE']
+none_fp = none_fp.dropna(axis=1, how='all')
+
+# TODO: STOPPED HERE
+
+
 NBAC_fp_fires = fp_w_flag['NFIREID'].unique()
 NBAC_fp_fires = NBAC_fp_fires[~np.isnan(NBAC_fp_fires)]
+
+pers_hs_fp_fires = fp_w_flag['GID'].unique()
+pers_hs_fp_fires = pers_hs_fp_fires[~np.isnan(pers_hs_fp_fires)]
+
+NFDB_fp_fires = fp_w_flag[fp_w_flag['perim-source']=='NFDB']
 
 for idx, fire in enumerate(NBAC_fp_fires):
 
@@ -246,9 +283,31 @@ for idx, fire in enumerate(NBAC_fp_fires):
     NBAC_perim.plot(ax=ax, color='black')
     temp_df.plot(ax=ax, color='red')
     plt.title('NBAC ID: ' + str(fire))
-    plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + str(fire) + '.png')
+    plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + 'NBAC-' + str(fire) + '.png')
 
-print('test')
+for idx, fire in enumerate(pers_hs_fp_fires):
+
+    temp_df = fp_w_flag[fp_w_flag['gid']== fire]
+    pers_hs_perim = pers_hs_cad_buff[pers_hs_cad_buff['gid']==fire]
+
+    temp_df = temp_df.to_crs(epsg=3978)
+    pers_hs_perim = pers_hs_perim.to_crs(epsg=3978)
+
+    fig, ax = plt.subplots(figsize=(10,8))
+    pers_hs_perim.plot(ax=ax, color='black')
+    temp_df.plot(ax=ax, color='red')
+    plt.title('Pers HS ID: ' + str(fire))
+    plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + 'pers-hs-' + str(fire) + '.png')
+
+for idx, fire in enumerate(NFDB_fp_fires):
+
+    print('test')
+
+    temp_df = fp_w_flag[fp_w_flag[''] == fire]
+
+
+    print('test')
+
 
 # Add a flag for if it has a high scan angle
 # Add a flag for if it's on the E ow W of the closest TP
