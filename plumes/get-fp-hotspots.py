@@ -35,7 +35,11 @@ doi_firms = str(year) + '-09-23'
 
 # Buffer distance
 #buffer_dist = 375*math.sqrt(2)
-buffer_dist = 375*2
+buffer_dist = 375*3
+
+shp_dir = r'C:\Users\kzammit\Documents\plumes\shp'
+plot_output_dir = r'C:\Users\kzammit\Documents\plumes\plots'
+df_dir = r'C:\Users\kzammit\Documents\plumes\dfs'
 
 ###### Code ######
 
@@ -131,7 +135,7 @@ def plot_fp(fp_df, col_id, orig_id, type_str, buffer_df):
         perim.plot(ax=ax, color='black')
         temp_df.plot(ax=ax, color='red')
         plt.title(type_str + ' ID: ' + str(fire))
-        plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + type_str + '-' + str(fire) + '.png')
+        plt.savefig(plot_output_dir + '\\' + type_str + '-' + str(fire) + '.png')
         plt.close()
 
 
@@ -190,7 +194,8 @@ if __name__ == "__main__":
     nfdb_doi = nfdb_doi[nfdb_doi['doi']==1]
     nfdb_doi = nfdb_doi.reset_index()
 
-    ### Persistent heat sources
+
+    ### PERSISTENT HEAT SOURCES
     pers_hs = gpd.read_file(pers_hs_shp)
     cad_provs = ['NL', 'PE', 'NS', 'NB', 'QC', 'ON', 'MB', 'SK', 'AB', 'BC', 'YT', 'NT', 'NU']
     pers_hs_cad = pers_hs[pers_hs['prov'].isin(cad_provs)]
@@ -198,60 +203,60 @@ if __name__ == "__main__":
     ### Apply buffers to all sounds to account for hotspot resolution
     # NAD83 (EPSG 3978) is commonly used for Canada
     # Commenting this out because it takes a few minutes to run
-    # print('Buffering boundaries')
+    #print('Buffering boundaries')
     #target_epsg = 3978
     #nbac_buff = project_and_buffer(nbac_doi, target_epsg)
     #nfdb_buff = project_and_buffer(nfdb_doi, target_epsg)
     #pers_hs_cad_buff = project_and_buffer(pers_hs_cad, target_epsg)
-    #nbac_buff.to_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\nbac-buff.shp')
-    #nfdb_buff.to_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\nfdb-buff.shp')
-    #pers_hs_cad_buff.to_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\pers-hs-cad-buff.shp')
+    #nbac_buff.to_file(shp_dir + '\\' + 'nbac-buff.shp')
+    #nfdb_buff.to_file(shp_dir + '\\' + 'nfdb-buff.shp')
+    #pers_hs_cad_buff.to_file(shp_dir + '\\' + 'pers-hs-cad-buff.shp')
 
-    nbac_buff = gpd.read_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\nbac-buff.shp')
-    nfdb_buff = gpd.read_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\nfdb-buff.shp')
-    pers_hs_cad_buff = gpd.read_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\pers-hs-cad-buff.shp')
+    nbac_buff = gpd.read_file(shp_dir + '\\' + 'nbac-buff.shp')
+    nfdb_buff = gpd.read_file(shp_dir + '\\' + 'nfdb-buff.shp')
+    pers_hs_cad_buff = gpd.read_file(shp_dir + '\\' + 'pers-hs-cad-buff.shp')
 
+    # Add source name to col called "perim-source" for ease of use later
     nbac_buff['perim-source'] = 'NBAC'
     nfdb_buff['perim-source'] = 'NFDB'
     pers_hs_cad_buff['perim-source'] = 'PH'
 
+    # Append all sources together
     df_perims = pd.concat([nbac_buff, nfdb_buff, pers_hs_cad_buff])
 
-    nbac_doi = nbac_doi.to_crs(epsg=4326)
-    nfdb_doi = nfdb_doi.to_crs(epsg=4326)
-
-    ### Canada
+    # Create a bounding box around Canada (this will include some of the States, but we'll fix this later)
     ne = gpd.read_file(nat_earth_shp)
     cad = ne[ne['ADMIN']=='Canada']
-
-    # Create a bounding box around Canada (this will include some of the States, but we'll fix this later)
     bbox_coords = cad.bounds
     bbox_coords = bbox_coords.reset_index()
     coords = f"{bbox_coords['minx'][0]},{bbox_coords['miny'][0]},{bbox_coords['maxx'][0]},{bbox_coords['maxy'][0]}"
 
+
+    ### HOTSPOTS
+
     # Pull hotspots from FIRMS
     df_hotspots = fetch_viirs_hotspots(coords, doi_firms, cad)
 
-    ### flag hotspots outside of boundaries
+    # Flag hotspots outside of boundaries and clean df
     tp_fp_flags = gpd.sjoin(df_hotspots, df_perims, predicate='within', how='left')
-
     col_index = tp_fp_flags.columns.get_loc('index_right0')
     tp_fp_flags_sub = tp_fp_flags.iloc[:, 0:col_index+1]
-
     tp_fp_flags_sub['NBAC-ID'] = tp_fp_flags['NFIREID']
     tp_fp_flags_sub['PH-ID'] = tp_fp_flags['gid']
     tp_fp_flags_sub['NFDB-ID'] = tp_fp_flags['NFDBFIREID']
     tp_fp_flags_sub['perim-source'] = tp_fp_flags['perim-source']
 
+    # Set the class to 1 if it's a true positive, and 0 if it's a false positive (outside of the boundary)
     tp_fp_flags_sub['Class'] = 1
     tp_fp_flags_sub.loc[tp_fp_flags_sub.index_right0.isnull(), 'Class'] = 0
-
-    print('The number of false positives is ' + str(tp_fp_flags_sub.Class[tp_fp_flags_sub.Class == 0].count()))
 
     # Add a column that identifies the closest TP
     tp = tp_fp_flags_sub[tp_fp_flags_sub['Class']==1]
     fp = tp_fp_flags_sub[tp_fp_flags_sub['Class']==0]
+    print('The number of false positives is ' + str(len(fp)))
 
+    # Determine the closest perimeter to each false positive (if less than max distance)
+    # if > max distance, cluster points together according to max distance
     fp = fp.to_crs(epsg=3978)
     tp = tp.to_crs(epsg=3978)
 
@@ -262,6 +267,7 @@ if __name__ == "__main__":
     # reset the perim_source to none if farther than 2000 m
     fp_w_flag.loc[fp_w_flag['dist'] > max_distance, 'perim-source'] = "NONE"
 
+    # Create sub dataframes for each source-type
     NBAC_fp = fp_w_flag[fp_w_flag['perim-source']=='NBAC']
     NBAC_fp = NBAC_fp.dropna(axis=1, how='all')
 
@@ -284,14 +290,13 @@ if __name__ == "__main__":
     if len(NFDB_fp) >= 1:
         plot_fp(NFDB_fp, 'NFDB-ID', 'NFDBFIREID', 'NFDB', nfdb_buff)
 
+    cluster_df = gpd.GeoDataFrame(columns=none_fp.columns)
+    cluster_df['cluster_id'] = 0
     if len(none_fp) >= 1:
 
         print('Clustering fp > ' +str(max_distance) + ' from known perimeters')
 
-        # currently this results in a lot of duplicates because some of the points are outside of the max distance
-        # from eachother within the same cluster... how to get around this?
-
-        # clump them together in minimum groups of 6 determined by the max distance
+        # Buffer false positives in the "none" group by max distance
         none_fp = none_fp.to_crs(epsg=3978)
         none_fp = none_fp.reset_index()
         buffers = none_fp.geometry.buffer(max_distance)
@@ -299,7 +304,7 @@ if __name__ == "__main__":
         # Create an empty list to store intersections
         intersections = []
 
-        # Perform pairwise intersection checks
+        # Perform pairwise intersection checks to see what fp's are close to each other
         for i in range(len(buffers)):
             for j in range(i + 1, len(buffers)):  # Only check upper triangle (avoid duplicates)
                 if buffers.iloc[i].intersects(buffers.iloc[j]):
@@ -308,8 +313,9 @@ if __name__ == "__main__":
         # create a dataframe of intersections
         int_df = pd.DataFrame(intersections)
 
-        # add another step here that checks if ANY of the points within the cluster are within the max distance
         # if the index val within a cluster is also within another cluster, merge them
+        # (this avoids duplicate clusters where points are > max distance individually, but where they actually
+        # belong to the same cluster
         # Using networkx package in python which does network analysis
         graph = Graph()
         for _, group in int_df.groupby(0):
@@ -321,10 +327,13 @@ if __name__ == "__main__":
         components = connected_components(graph)
         merged_groups = [set(component) for component in components]
 
+        cols = none_fp.columns
         for idx, fire in enumerate(merged_groups):
 
             # get rows with these indices from none_fp
             df_temp = none_fp.loc[list(merged_groups[idx])]
+            df_temp['cluster_id'] = idx
+            cluster_df = pd.concat([cluster_df, df_temp])
 
             if len(df_temp) > 3:
 
@@ -333,15 +342,59 @@ if __name__ == "__main__":
                 fig, ax = plt.subplots(figsize=(10, 8))
                 df_temp.plot(ax=ax, color='red')
                 plt.title('Cluster #: ' + str(idx))
-                plt.savefig(r'C:\Users\kzammit\Documents\plumes\plots' + '\\' + 'cluster-' + str(idx) + '.png')
+                plt.savefig(plot_output_dir + '\\' + 'cluster-' + str(idx) + '.png')
                 plt.close()
 
 
-    # TODO: Save clustered points with corresponding ID's into one dataframe
+    # Create one dataframe for all aggregated fp's
+    NBAC_agg = gpd.GeoDataFrame(columns=NBAC_fp.columns)
+    if len(NBAC_fp) > 0:
+        NBAC_agg = NBAC_fp[['geometry', 'NBAC-ID']]
+        NBAC_agg = NBAC_agg.dissolve(by='NBAC-ID', aggfunc='sum')
+        NBAC_agg = NBAC_agg.reset_index()
+        NBAC_agg['source'] = 'NBAC'
+        NBAC_agg = NBAC_agg.rename(columns={"NBAC-ID": "id"})
+
+    cluster_agg = gpd.GeoDataFrame(columns=cluster_df.columns)
+    if len(none_fp) > 0:
+        cluster_agg = cluster_df[['geometry', 'cluster_id']]
+        cluster_agg = cluster_agg.dissolve(by='cluster_id', aggfunc='sum')
+        cluster_agg = cluster_agg.reset_index()
+        cluster_agg['source'] = 'None'
+        cluster_agg = cluster_agg.rename(columns={"cluster_id": "id"})
+
+    NFDB_agg = gpd.GeoDataFrame(columns=NFDB_fp.columns)
+    if len(NFDB_fp) > 0:
+        NFDB_agg = NFDB_fp[['geometry', 'NFDB-ID']]
+        NFDB_agg = NFDB_agg.dissolve(by='NFDB-ID', aggfunc='sum')
+        NFDB_agg = NFDB_agg.reset_index()
+        NFDB_agg['source'] = 'NFDB'
+        NFDB_agg = NFDB_agg.rename(columns={"NFDB-ID": "id"})
+
+    pers_hs_agg = gpd.GeoDataFrame(columns=pers_hs_fp.columns)
+    if len(pers_hs_fp) > 0:
+        pers_hs_agg = pers_hs_fp[['geometry', 'PH-ID']]
+        pers_hs_agg = pers_hs_agg.dissolve(by='PH-ID', aggfunc='sum')
+        pers_hs_agg = pers_hs_agg.reset_index()
+        pers_hs_agg['source'] = 'PH'
+        pers_hs_agg = pers_hs_agg.rename(columns={"PH-ID": "id"})
+
+    fp_all = pd.concat([NBAC_agg, cluster_agg, NFDB_agg, pers_hs_agg])
+    fp_all = fp_all.reset_index(drop=True)
+
+    # Create a new column 'bounds' and assign the bounds from the geometry column
+    # Convert to 4326 for use in geemap
+    fp_all = fp_all.to_crs(epsg=4326)
+    fp_all['bounds'] = fp_all['geometry'].apply(lambda geom: geom.bounds)
+    fp_all.to_excel(df_dir + '\\' + 'all-false-positives.xlsx')
+
+    print('test')
+
+
+
     # TODO: Add bounding box around the clusters for plotting imagery
     # TODO: Add a flag for each hot spot if it had a high scan angle
     # TODO: Add flag for if it's on the E or W of the closest TP
-
 
 
 print('Done')
