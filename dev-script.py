@@ -1,10 +1,14 @@
 import matplotlib.pyplot as plt
-import rioxarray
+import pandas as pd
+import geopandas as gpd
+import numpy as np
+
+db_pts = pd.read_excel(r'C:\Users\kzammit\Documents\plumes\dfs\clusters-dbscan.xlsx')
+db_pts = db_pts.rename(columns={0:"Clusters"})
+
+kz_pts = pd.read_excel(r'C:\Users\kzammit\Documents\plumes\dfs\all-false-positives.xlsx')
 
 
-dob_tiff = rioxarray.open_rasterio(r'C:\Users\kzammit\Documents\CFSDS\CFSDS_example_Nov2023\firearrival_decimal_krig.tif', masked=True)
 
-fig, ax1 = plt.subplots(1, 1, figsize=(20, 10), sharex=True, sharey=True)
-dob_tiff.plot(cmap='viridis', ax=ax1)
 
-plt.savefig(r'C:\Users\kzammit\Documents\CFSDS\CFSDS_example_Nov2023\tiff-plot.png')
+print('test')

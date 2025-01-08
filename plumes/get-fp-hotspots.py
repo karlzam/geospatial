@@ -5,6 +5,7 @@ from datetime import datetime
 import numpy as np
 from networkx import Graph, connected_components
 from scipy.spatial import cKDTree
+from sklearn.cluster import DBSCAN
 
 
 ###### User Inputs ######
@@ -291,6 +292,7 @@ if __name__ == "__main__":
         plot_fp(NFDB_fp, 'NFDB-ID', 'NFDBFIREID', 'NFDB', nfdb_buff)
 
     cluster_df = gpd.GeoDataFrame(columns=none_fp.columns)
+
     cluster_df['cluster_id'] = 0
     if len(none_fp) >= 1:
 
@@ -386,13 +388,11 @@ if __name__ == "__main__":
     # Convert to 4326 for use in geemap
     fp_all = fp_all.to_crs(epsg=4326)
     fp_all['bounds'] = fp_all['geometry'].apply(lambda geom: geom.bounds)
-    fp_all.to_excel(df_dir + '\\' + 'all-false-positives.xlsx')
-
-    print('test')
+    fp_all.to_excel(df_dir + '\\' + 'all-false-positives.xlsx', index=False)
 
 
 
-    # TODO: Add bounding box around the clusters for plotting imagery
+    # TODO: Add bounding ox around the clusters for plotting imagery
     # TODO: Add a flag for each hot spot if it had a high scan angle
     # TODO: Add flag for if it's on the E or W of the closest TP
 
