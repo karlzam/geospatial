@@ -6,6 +6,7 @@ import numpy as np
 from networkx import Graph, connected_components
 from scipy.spatial import cKDTree
 from sklearn.cluster import DBSCAN
+from shapely.geometry import MultiPoint
 
 
 ###### User Inputs ######
@@ -291,6 +292,35 @@ if __name__ == "__main__":
     if len(NFDB_fp) >= 1:
         plot_fp(NFDB_fp, 'NFDB-ID', 'NFDBFIREID', 'NFDB', nfdb_buff)
 
+
+    # DBSCAN Clustering for the points with no boundary within the maximum distance
+    # Note that the crs for the undefined clusters will be EPSG:4326 because the shapely geometry column is the only
+    # col affected by "to_crs"
+
+    coords = none_fp[['latitude', 'longitude']].to_numpy()
+    kms_per_radian = 6371.0088
+    epsilon = 2 / kms_per_radian
+    db = DBSCAN(eps=epsilon, min_samples=3, algorithm='ball_tree', metric='haversine').fit(np.radians(coords))
+    cluster_labels = db.labels_
+    num_clusters = len(set(cluster_labels))
+    clusters = pd.Series([coords[cluster_labels == n] for n in range(num_clusters)])
+
+    clusters_df = {"points": clusters}
+    clusters_df = pd.DataFrame(clusters_df)
+
+    def array_to_multipoint(array):
+        return MultiPoint(array)
+
+    # something is wrong here, the coordinates are swapped
+
+    clusters_df['multipoint'] = clusters_df['points'].apply(array_to_multipoint)
+
+    # Remove empty clusters that were indicated by DBSCAN
+    clusters_df = clusters_df[clusters_df['multipoint'].apply(lambda x: not x.is_empty)]
+
+    """
+    # My old clustering algorithm
+    
     cluster_df = gpd.GeoDataFrame(columns=none_fp.columns)
 
     cluster_df['cluster_id'] = 0
@@ -346,7 +376,8 @@ if __name__ == "__main__":
                 plt.title('Cluster #: ' + str(idx))
                 plt.savefig(plot_output_dir + '\\' + 'cluster-' + str(idx) + '.png')
                 plt.close()
-
+                
+    """
 
     # Create one dataframe for all aggregated fp's
     NBAC_agg = gpd.GeoDataFrame(columns=NBAC_fp.columns)
@@ -356,14 +387,19 @@ if __name__ == "__main__":
         NBAC_agg = NBAC_agg.reset_index()
         NBAC_agg['source'] = 'NBAC'
         NBAC_agg = NBAC_agg.rename(columns={"NBAC-ID": "id"})
+        NBAC_agg = NBAC_agg.to_crs('EPSG:4326')
 
-    cluster_agg = gpd.GeoDataFrame(columns=cluster_df.columns)
+    cluster_agg = gpd.GeoDataFrame(columns=clusters_df.columns)
     if len(none_fp) > 0:
-        cluster_agg = cluster_df[['geometry', 'cluster_id']]
-        cluster_agg = cluster_agg.dissolve(by='cluster_id', aggfunc='sum')
+        cluster_agg = gpd.GeoDataFrame(clusters_df, geometry='multipoint', crs="EPSG:4326")
+        cluster_agg = cluster_agg.reset_index()
+        cluster_agg = cluster_agg.rename(columns={"index" : "id"})
+        cluster_agg = cluster_agg.dissolve(by='id', aggfunc='sum')
         cluster_agg = cluster_agg.reset_index()
         cluster_agg['source'] = 'None'
-        cluster_agg = cluster_agg.rename(columns={"cluster_id": "id"})
+        cluster_agg = cluster_agg.drop(['points'], axis=1)
+        cluster_agg = cluster_agg.to_crs('EPSG:4326')
+        cluster_agg = cluster_agg.rename(columns={"multipoint": "geometry"})
 
     NFDB_agg = gpd.GeoDataFrame(columns=NFDB_fp.columns)
     if len(NFDB_fp) > 0:
@@ -372,6 +408,7 @@ if __name__ == "__main__":
         NFDB_agg = NFDB_agg.reset_index()
         NFDB_agg['source'] = 'NFDB'
         NFDB_agg = NFDB_agg.rename(columns={"NFDB-ID": "id"})
+        NFDB_agg = NFDB_agg.to_crs('EPSG:4326')
 
     pers_hs_agg = gpd.GeoDataFrame(columns=pers_hs_fp.columns)
     if len(pers_hs_fp) > 0:
@@ -380,19 +417,18 @@ if __name__ == "__main__":
         pers_hs_agg = pers_hs_agg.reset_index()
         pers_hs_agg['source'] = 'PH'
         pers_hs_agg = pers_hs_agg.rename(columns={"PH-ID": "id"})
+        pers_hs_agg = pers_hs_agg.to_crs('EPSG:4326')
+
+    print('test')
 
     fp_all = pd.concat([NBAC_agg, cluster_agg, NFDB_agg, pers_hs_agg])
     fp_all = fp_all.reset_index(drop=True)
 
     # Create a new column 'bounds' and assign the bounds from the geometry column
     # Convert to 4326 for use in geemap
-    fp_all = fp_all.to_crs(epsg=4326)
     fp_all['bounds'] = fp_all['geometry'].apply(lambda geom: geom.bounds)
-    fp_all.to_excel(df_dir + '\\' + 'all-false-positives.xlsx', index=False)
+    fp_all.to_excel(df_dir + '\\' + 'all-false-positives-dbscan.xlsx', index=False)
 
-
-
-    # TODO: Add bounding ox around the clusters for plotting imagery
     # TODO: Add a flag for each hot spot if it had a high scan angle
     # TODO: Add flag for if it's on the E or W of the closest TP
 
