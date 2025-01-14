@@ -109,19 +109,21 @@ if __name__ == "__main__":
 
     ###### User Inputs ######
 
-    years = ['2023', '2023']
-    dois = ['2023/09/23', '2023/07/01']
-    dois_firms = ['2023-09-23', '2023-07-01']
-    dois_firms_2 = ['2023-09-24', '2023-07-02']
+    dois = ['2023/07/01', '2023/08/01', '2023/09/01', '2023/09/23']
+
+    # Buffer distance
+    # buffer_dist = 375*math.sqrt(2)
+    buffer_dist = 375 * 3
+
+    # The max distance to consider points near boundaries or to cluster points
+    max_distance = 2000
 
     nbac_folder = r'C:\Users\kzammit\Documents\shp\nbac'
-    # Obtained from: https://cwfis.cfs.nrcan.gc.ca/downloads/nbac/
-    nbac_shps = [nbac_folder + '\\' + 'nbac_2023_20240530.shp', nbac_folder + '\\' + 'nbac_2023_20240530.shp']
 
     # At the time of writing this script, NFDB polygons were not available for 2023
     # Obtained from: https://cwfis.cfs.nrcan.gc.ca/datamart/download/nfdbpnt
     nfdb_folder = r'C:\Users\kzammit\Documents\shp\nfdb'
-    nfdb_shps = [nfdb_folder + '\\' + 'NFDB_point_20240613.shp', nfdb_folder + '\\' + 'NFDB_point_20240613.shp']
+    nfdb_shp = 'NFDB_point_20240613.shp'
 
     # Obtained from Piyush
     pers_hs_shp = r'C:\Users\kzammit\Documents\shp\pers-hs\m3mask5_lcc.shp'
@@ -130,16 +132,25 @@ if __name__ == "__main__":
     # ne_10m_admin_0_countries.zip
     nat_earth_shp = r'C:\Users\kzammit\Documents\shp\nat-earth\ne_10m_admin_0_countries.shp'
 
-    # Buffer distance
-    # buffer_dist = 375*math.sqrt(2)
-    buffer_dist = 375 * 3
-
     shp_dir = r'C:\Users\kzammit\Documents\plumes\shp'
     plot_output_dir = r'C:\Users\kzammit\Documents\plumes\plots'
     df_dir = r'C:\Users\kzammit\Documents\plumes\dfs'
 
     # FIRMS may key to use API
     FIRMS_map_key = 'e865c77bb60984ab516517cd4cdadea0'
+
+    ###### Code ######
+
+    years = [doi.split('/')[0] for doi in dois]
+
+    dois_firms = ['-'.join(doi.split('/')) for doi in dois]
+
+    dois_firms_2 = ['-'.join(doi.split('/')[:2]) + '-' + f"{int(doi.split('/')[2]) + 1:02d}" for doi in dois]
+
+    nbac_shps = [nbac_folder + '\\' + 'nbac_' + doi.split('/')[0] + '_20240530.shp' for doi in dois]
+    nfdb_shps = [nfdb_folder + '\\' + nfdb_shp for _ in dois]
+
+    print('test')
 
     for idx, year in enumerate(years):
 
@@ -148,8 +159,6 @@ if __name__ == "__main__":
         yoi = int(year)
         doi_firms = dois_firms[idx]
         doi_firms_2 = dois_firms_2[idx]
-
-        ###### Code ######
 
         ### NBAC
         # Import all fires for 2023
@@ -270,7 +279,6 @@ if __name__ == "__main__":
         fp = fp.to_crs(epsg=3978)
         tp = tp.to_crs(epsg=3978)
 
-        max_distance = 2000
         print('Determining closest perimeter within max distance of ' + str(max_distance))
         fp_w_flag = ckdnearest(fp, tp)
         fp_w_flag = fp_w_flag.dropna(axis=1, how='all')
