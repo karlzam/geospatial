@@ -151,8 +151,6 @@ if __name__ == "__main__":
     nbac_shps = [nbac_folder + '\\' + 'nbac_' + doi.split('/')[0] + '_20240530.shp' for doi in dois]
     nfdb_shps = [nfdb_folder + '\\' + nfdb_shp for _ in dois]
 
-    print('test')
-
     for idx, year in enumerate(years):
 
         # Date to focus analysis on (training used 2023, val used 2022)
