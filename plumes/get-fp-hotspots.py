@@ -109,8 +109,10 @@ if __name__ == "__main__":
 
     ###### User Inputs ######
 
-    dois = ['2023/09/18', '2023/09/19', '2023/09/20','2023/09/21', '2023/09/22', '2023/09/23',
-            '2023/09/24', '2023/09/25', '2023/09/26', '2023/09/27', '2023/09/28', '2023/09/29']
+    #dois = ['2023/09/18', '2023/09/19', '2023/09/20','2023/09/21', '2023/09/22', '2023/09/23',
+    #        '2023/09/24', '2023/09/25', '2023/09/26', '2023/09/27', '2023/09/28', '2023/09/29']
+
+    dois = ['2023/09/24']
 
     # Buffer distance
     # buffer_dist = 375*math.sqrt(2)
@@ -255,6 +257,8 @@ if __name__ == "__main__":
         # Pull hotspots from FIRMS
         df_hotspots = fetch_viirs_hotspots(coords, doi_firms, cad)
 
+        # TODO: Need to make sure that there are no "holes" within the perimeters
+        # Even with buffering I'm still missing some
         # Flag hotspots outside of boundaries and clean df
         tp_fp_flags = gpd.sjoin(df_hotspots, df_perims, predicate='within', how='left')
         col_index = tp_fp_flags.columns.get_loc('index_right0')
@@ -433,6 +437,25 @@ if __name__ == "__main__":
             pers_hs_agg['source'] = 'PH'
             pers_hs_agg = pers_hs_agg.rename(columns={"PH-ID": "id"})
             pers_hs_agg = pers_hs_agg.to_crs('EPSG:4326')
+
+        # Add pathway to NBAC or NFDB fire polygon to output shape so I can add in geemap
+        # I guess I need to actually assign it the buffered perimeter, not by ID because there's multiple..
+        # No, what I did was right because the clusters are assigned to a specific ID
+        # I'm not sure why they appear to be overlapping though... must be an error
+        # It's the way gee is reading in the multipolygon object... I wonder if there's a better way
+
+        # need to convert the epsg first before doing this, but it works
+        if len(NBAC_agg) > 0:
+            nbac_4326 = nbac.to_crs("EPSG:4326")
+            NBAC_agg['fire-perimeter'] = NBAC_agg['id'].apply(
+                lambda x: nbac_4326.loc[nbac_4326['NFIREID'] == x, 'geometry'].values[0] if not nbac_4326.loc[
+                    nbac_4326['NFIREID'] == x, 'geometry'].empty else None)
+
+        if len(NFDB_agg) > 0:
+            nfdb_4326 = nfdb.to_crs("EPSG:4326")
+            NFDB_agg['fire-perimeter'] = NFDB_agg['id'].apply(
+                lambda x: nfdb_4326.loc[nfdb_4326['NFIREID'] == x, 'geometry'].values[0] if not nfdb_4326.loc[
+                    nfdb_4326['NFIREID'] == x, 'geometry'].empty else None)
 
         fp_all = pd.concat([NBAC_agg, cluster_agg, NFDB_agg, pers_hs_agg])
         fp_all = fp_all.reset_index(drop=True)
