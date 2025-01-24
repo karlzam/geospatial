@@ -1,86 +1,18 @@
-"""
-
-get-fp-hotspots.py
-
-This script investigates hotspot detections from the VIIRS instrument. It:
-1. Loads NBAC, NFDB, and persistent hotspot polygons for a date of interest
-2. Buffers polygons by a set distance
-3. Computes a concave perimeter from the buffered perimeters (these can be multipolygon objects, so we convert to a
-   single polygon
-3. Grabs VIIRS FIRMS hotspots for all of Canada
-4.
-
-Author: Karlee Zammal the Party Mammal
-Contact: karlee.zammit@nrcan-rncan.gc.ca
-Date: 2025-01-25
-
-"""
+from turtledemo.nim import computerzug
 
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from datetime import datetime
 import numpy as np
-from scipy.spatial import KDTree
+from networkx import Graph, connected_components
+from scipy.spatial import cKDTree
 from sklearn.cluster import DBSCAN
 from shapely.geometry import MultiPoint, MultiPolygon, Polygon
 import alphashape
 
-
-###### User Inputs ######
-
-# Date of Interest
-# dois = ['2023/09/18', '2023/09/19', '2023/09/20','2023/09/21', '2023/09/22', '2023/09/23',
-#        '2023/09/24', '2023/09/25', '2023/09/26', '2023/09/27', '2023/09/28', '2023/09/29']
-dois = ['2023/09/24']
-
-# Buffer Distance
-# This distance is applied to the NBAC, NFDB, and persistent hotspot polygons
-buffer_dist = 375 * 3
-
-# Max Distance
-# The max distance to consider points near boundaries or to cluster points
-max_distance = 2000
-
-# NBAC Folder
-# Where the nbac shapefiles live
-nbac_folder = r'C:\Users\kzammit\Documents\shp\nbac'
-
-# NFDB Folder and Polygon
-# At the time of writing this script, NFDB polygons were not available for 2023
-# Obtained from: https://cwfis.cfs.nrcan.gc.ca/datamart/download/nfdbpnt
-nfdb_folder = r'C:\Users\kzammit\Documents\shp\nfdb'
-nfdb_shp = 'NFDB_point_20240613.shp'
-
-# Persistent Hotspots
-# File obtained from Piyush
-pers_hs_shp = r'C:\Users\kzammit\Documents\shp\pers-hs\m3mask5_lcc.shp'
-
-# Natural Earth Shapefile
-# Obtained from https://www.naturalearthdata.com/http//www.naturalearthdata.com/download/10m/cultural/
-# ne_10m_admin_0_countries.zip
-nat_earth_shp = r'C:\Users\kzammit\Documents\shp\nat-earth\ne_10m_admin_0_countries.shp'
-
-# Directories
-shp_dir = r'C:\Users\kzammit\Documents\plumes\shp'
-plot_output_dir = r'C:\Users\kzammit\Documents\plumes\plots'
-df_dir = r'C:\Users\kzammit\Documents\plumes\dfs'
-
-# FIRMS Map Key
-FIRMS_map_key = 'e865c77bb60984ab516517cd4cdadea0'
-
-
-###### Functions ######
-
-
+# Helper function to project and buffer geometries
 def project_and_buffer(gdf, target_epsg, buffer_dist):
-    """
-    Project and buffer geometries to epsg 4326
-    :param gdf: geodataframe to buffer/project
-    :param target_epsg: the epsg to use for buffering
-    :param buffer_dist: distance in m to buffer the polygons by
-    :return:
-    """
     gdf_projected = gdf.to_crs(target_epsg)
     gdf_projected['geometry'] = gdf_projected['geometry'].buffer(buffer_dist)
     gdf_projected = gdf_projected.to_crs(epsg=4326)
@@ -88,15 +20,6 @@ def project_and_buffer(gdf, target_epsg, buffer_dist):
 
 
 def fetch_viirs_hotspots(coords, doi_firms, cad):
-    """
-    Grab viirs hotspots (both NOOA20 & NOAA21) from FIRMS and crop to include only within Canada
-    :param FIRMS_map_key: Your personal FIRMS key for using their API
-    :param coords: region to grab hotspots within
-    :param doi_firms: date of interest to grab hotspots from (currently only pulls 1 day at a time by design)
-    :param cad: canadian shape file to remove hotspots pulled outside of Canada due to rectangular box
-    :return:
-    """
-
     ### Hotspots
     # Only SNPP and NOAA20 are available for 2023 (NOAA21 came after)
     # FIRMS
@@ -143,28 +66,18 @@ def fetch_viirs_hotspots(coords, doi_firms, cad):
     return df_hotspots
 
 
-def kdnearest(gdA, gdB):
-    """
-    Determine the closest possible perimeter by referencing the tp database and grabbing the source name
-    :param gdA: geodataframe a (in this case, fp)
-    :param gdB: geodataframe b (in this case, tp)
-    :return:
-    """
-    # nA = fp
-    # nB = tp
+# From here: https://gis.stackexchange.com/questions/222315/finding-nearest-point-in-other-geodataframe-using-geopandas
+def ckdnearest(gdA, gdB):
+
     nA = np.array(list(gdA.geometry.apply(lambda x: (x.x, x.y))))
     nB = np.array(list(gdB.geometry.apply(lambda x: (x.x, x.y))))
-
-    # https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.spatial.KDTree.html
-    btree = KDTree(nB)
+    # Documentation explains this is a kd-tree for quick nearest neighbour lookup
+    btree = cKDTree(nB)
     dist, idx = btree.query(nA, k=1)
 
     # Keep the geometry column from gdA which is TP's
     gdB_nearest = gdB.iloc[idx].drop(columns="geometry").reset_index(drop=True)
-
-    # I use these later
     cols_to_append = ['perim-source', 'NBAC-ID', 'NFDB-ID', 'PH-ID']
-
     gdf = pd.concat(
         [
             gdA.reset_index(drop=True),
@@ -178,16 +91,6 @@ def kdnearest(gdA, gdB):
 
 
 def plot_fp(fp_df, col_id, orig_id, type_str, buffer_df, date_label):
-    """
-    Function to plot perimeters with corresponding false positives indicated within the maximum distance
-    :param fp_df: false positive dataframe
-    :param col_id: what column to look in to grab the fire id
-    :param orig_id: original fire id
-    :param type_str: what source type the cluster belongs to (NBAC, NFDB, etc)
-    :param buffer_df: perimeter buffer dataframe
-    :param date_label: what date is being plotted
-    :return:
-    """
 
     for idx, fire in enumerate(fp_df[col_id].unique()):
 
@@ -205,82 +108,70 @@ def plot_fp(fp_df, col_id, orig_id, type_str, buffer_df, date_label):
         plt.close()
 
 
-def compute_concave_hull(geometry, alpha=1.5):
-    """
-    Compute concave perimeter instead of using more simple convex hull
-    :param geometry:
-    :param alpha: smoothing value, zero = convex hull, larger = more detailed, but careful
-    as it will omit points eventually
-    :return: concave perimeter
-    """
-    if isinstance(geometry, MultiPolygon):
-        coords = []
-        for polygon in geometry.geoms:
-            coords.extend(polygon.exterior.coords)
-    elif isinstance(geometry, Polygon):
-        coords = list(geometry.exterior.coords)
-    else:
-        raise ValueError("Geometry must be polygon or multipolygon")
-
-    if len(coords) < 3:
-        return geometry
-
-    # https://pypi.org/project/alphashape/
-    concave_hull = alphashape.alphashape(coords,alpha)
-    return concave_hull
-
-
-def concat_perims(agg_df, buff_df, flag):
-    """
-    Join together NBAC polygons that have the same FIRE ID
-    :param agg_df:
-    :param buff_df:
-    :param flag:
-    :return:
-    """
-    concattd_perims = []
-    unique_ids = agg_df['id'].unique()
-    for id_fi in unique_ids:
-        temp = buff_df[buff_df[flag] == id_fi]
-        if len(temp) == 1:
-            temp = temp.reset_index()
-            concattd_perims.append(temp['geometry'].loc[0])
-        if len(temp) > 1:
-            concattd_perims.append(temp['geometry'].union_all())
-
-    return concattd_perims
-
-
 if __name__ == "__main__":
 
-    # get years from the date of interest
+    ###### User Inputs ######
+
+    #dois = ['2023/09/18', '2023/09/19', '2023/09/20','2023/09/21', '2023/09/22', '2023/09/23',
+    #        '2023/09/24', '2023/09/25', '2023/09/26', '2023/09/27', '2023/09/28', '2023/09/29']
+
+    dois = ['2023/09/24']
+
+    # Buffer distance
+    # buffer_dist = 375*math.sqrt(2)
+    buffer_dist = 375 * 3
+
+    # The max distance to consider points near boundaries or to cluster points
+    max_distance = 2000
+
+    nbac_folder = r'C:\Users\kzammit\Documents\shp\nbac'
+
+    # At the time of writing this script, NFDB polygons were not available for 2023
+    # Obtained from: https://cwfis.cfs.nrcan.gc.ca/datamart/download/nfdbpnt
+    nfdb_folder = r'C:\Users\kzammit\Documents\shp\nfdb'
+    nfdb_shp = 'NFDB_point_20240613.shp'
+
+    # Obtained from Piyush
+    pers_hs_shp = r'C:\Users\kzammit\Documents\shp\pers-hs\m3mask5_lcc.shp'
+
+    # Obtained from https://www.naturalearthdata.com/http//www.naturalearthdata.com/download/10m/cultural/
+    # ne_10m_admin_0_countries.zip
+    nat_earth_shp = r'C:\Users\kzammit\Documents\shp\nat-earth\ne_10m_admin_0_countries.shp'
+
+    shp_dir = r'C:\Users\kzammit\Documents\plumes\shp'
+    plot_output_dir = r'C:\Users\kzammit\Documents\plumes\plots'
+    df_dir = r'C:\Users\kzammit\Documents\plumes\dfs'
+
+    # FIRMS may key to use API
+    FIRMS_map_key = 'e865c77bb60984ab516517cd4cdadea0'
+
+    ###### Code ######
+
     years = [doi.split('/')[0] for doi in dois]
 
-    # formatting dates for firms
     dois_firms = ['-'.join(doi.split('/')) for doi in dois]
+
     dois_firms_2 = ['-'.join(doi.split('/')[:2]) + '-' + f"{int(doi.split('/')[2]) + 1:02d}" for doi in dois]
 
-    # set up arrays for nbac and nfdb (repeats for each day of interest due to how script works)
     nbac_shps = [nbac_folder + '\\' + 'nbac_' + doi.split('/')[0] + '_20240530.shp' for doi in dois]
     nfdb_shps = [nfdb_folder + '\\' + nfdb_shp for _ in dois]
 
-    # For each date of interest (referencing each one by year even though it's just the first part of each doi)
     for idx, year in enumerate(years):
 
-        # Set up date
+        # Date to focus analysis on (training used 2023, val used 2022)
         doi = dois[idx]
         yoi = int(year)
         doi_firms = dois_firms[idx]
         doi_firms_2 = dois_firms_2[idx]
 
-        # Read NBAC file
+        ### NBAC
+        # Import all fires for 2023
+        # Obtained from: https://cwfis.cfs.nrcan.gc.ca/downloads/nbac/
         nbac = gpd.read_file(nbac_shps[idx])
 
-        # NBAC Date Formatting
         # NBAC has agency start date as well as hotspot start date, and these often do not align
         # If one of them is missing, the fill value is "0000/00/00"
-        # Create start and end date columns from the earlier or later of the two respectively (ignoring the fill val)
-
+        # Create start and end date columns from the earlier or later of the two respectively
         nbac['start_date'] = 'tbd'
 
         # If either agency or hotspot start date is empty, assign the other as the start date
@@ -288,19 +179,15 @@ if __name__ == "__main__":
         nbac.loc[nbac['AG_SDATE'] == '0000/00/00', 'start_date'] = nbac['HS_SDATE']
 
         # Pick the earlier of the two for the start date, excluding the empties
-        nbac.loc[(nbac['HS_SDATE'] <= nbac['AG_SDATE']) & (nbac['HS_SDATE'] != '0000/00/00'), 'start_date'] = nbac[
-            'HS_SDATE']
-        nbac.loc[(nbac['AG_SDATE'] <= nbac['HS_SDATE']) & (nbac['AG_SDATE'] != '0000/00/00'), 'start_date'] = nbac[
-            'AG_SDATE']
+        nbac.loc[(nbac['HS_SDATE'] <= nbac['AG_SDATE']) & (nbac['HS_SDATE'] != '0000/00/00'), 'start_date'] = nbac['HS_SDATE']
+        nbac.loc[(nbac['AG_SDATE'] <= nbac['HS_SDATE']) & (nbac['AG_SDATE'] != '0000/00/00'), 'start_date'] = nbac['AG_SDATE']
 
         # Do the same steps for the end date
         nbac['end_date'] = 'tbd'
         nbac.loc[nbac['HS_EDATE'] == '0000/00/00', 'end_date'] = nbac['AG_EDATE']
         nbac.loc[nbac['AG_EDATE'] == '0000/00/00', 'end_date'] = nbac['HS_EDATE']
-        nbac.loc[(nbac['HS_EDATE'] >= nbac['AG_EDATE']) & (nbac['HS_EDATE'] != '0000/00/00'), 'end_date'] = nbac[
-            'HS_EDATE']
-        nbac.loc[(nbac['AG_EDATE'] >= nbac['HS_EDATE']) & (nbac['AG_EDATE'] != '0000/00/00'), 'end_date'] = nbac[
-            'AG_EDATE']
+        nbac.loc[(nbac['HS_EDATE'] >= nbac['AG_EDATE']) & (nbac['HS_EDATE'] != '0000/00/00'), 'end_date'] = nbac['HS_EDATE']
+        nbac.loc[(nbac['AG_EDATE'] >= nbac['HS_EDATE']) & (nbac['AG_EDATE'] != '0000/00/00'), 'end_date'] = nbac['AG_EDATE']
 
         # There are some cases where there is no agency date OR hotspot date, drop these
         nbac = nbac.drop(nbac[(nbac.start_date == '0000/00/00')].index)
@@ -310,69 +197,123 @@ if __name__ == "__main__":
         date_format = '%Y/%m/%d'
         date_obj = datetime.strptime(doi, date_format)
         nbac['doi'] = 0
-        nbac = nbac.assign(start_dt=lambda x: pd.to_datetime(x['start_date'], format=date_format))
-        nbac = nbac.assign(end_dt=lambda x: pd.to_datetime(x['end_date'], format=date_format))
+        nbac = nbac.assign(start_dt = lambda x: pd.to_datetime(x['start_date'], format=date_format))
+        nbac = nbac.assign(end_dt = lambda x: pd.to_datetime(x['end_date'], format=date_format))
         nbac.loc[(nbac['start_dt'] <= date_obj) & (nbac['end_dt'] >= date_obj), "doi"] = 1
 
         # Create a new dataframe for only fires containing the date of interest
-        nbac_doi = nbac[nbac['doi'] == 1]
+        nbac_doi = nbac[nbac['doi']==1]
         nbac_doi = nbac_doi.reset_index()
 
-        ### NFDB (similar steps)
+
+        ### NFDB
         nfdb = gpd.read_file(nfdb_shps[idx])
-        nfdb_doi = nfdb[nfdb['YEAR'] == yoi]
+        nfdb_doi = nfdb[nfdb['YEAR']==yoi]
         nfdb_doi = nfdb_doi.drop(nfdb_doi[(nfdb_doi.OUT_DATE == '0000/00/00')].index)
         nfdb_doi['doi'] = 0
-        nfdb_doi = nfdb_doi.assign(start_dt=lambda x: pd.to_datetime(x['REP_DATE'], format=date_format))
-        nfdb_doi = nfdb_doi.assign(end_dt=lambda x: pd.to_datetime(x['OUT_DATE'], format=date_format))
+        nfdb_doi = nfdb_doi.assign(start_dt = lambda x: pd.to_datetime(x['REP_DATE'], format=date_format))
+        nfdb_doi = nfdb_doi.assign(end_dt = lambda x: pd.to_datetime(x['OUT_DATE'], format=date_format))
         nfdb_doi.loc[(nfdb_doi['start_dt'] <= date_obj) & (nfdb_doi['end_dt'] >= date_obj), "doi"] = 1
-        nfdb_doi = nfdb_doi[nfdb_doi['doi'] == 1]
+        nfdb_doi = nfdb_doi[nfdb_doi['doi']==1]
         nfdb_doi = nfdb_doi.reset_index()
+
 
         ### PERSISTENT HEAT SOURCES
         pers_hs = gpd.read_file(pers_hs_shp)
         cad_provs = ['NL', 'PE', 'NS', 'NB', 'QC', 'ON', 'MB', 'SK', 'AB', 'BC', 'YT', 'NT', 'NU']
         pers_hs_cad = pers_hs[pers_hs['prov'].isin(cad_provs)]
 
-        # Buffer boundaries
+        ### Apply buffers to all sounds to account for hotspot resolution
+        # NAD83 (EPSG 3978) is commonly used for Canada
+        # Commenting this out because it takes a few minutes to run
         print('Buffering boundaries')
         target_epsg = 3978
         nbac_buff = project_and_buffer(nbac_doi, target_epsg, buffer_dist)
         nfdb_buff = project_and_buffer(nfdb_doi, target_epsg, buffer_dist)
         pers_hs_cad_buff = project_and_buffer(pers_hs_cad, target_epsg, buffer_dist)
 
-        # compute concave buffers (only NBAC as NFDB & persistent are points)
-        nbac_buff_conc = nbac_buff.copy()
-        geom = nbac_buff_conc.geometry.apply(lambda geom: compute_concave_hull(geom, alpha=1.5))
-        nbac_buff_conc['geometry'] = geom
+        #nbac_buff_convh = nbac_buff.geometry.convex_hull
 
-        # save files to shapefile dir
-        nbac_buff_conc.to_file(shp_dir + '\\' + 'nbac-buff-concav' + str(doi_firms) + '.shp')
+        # https://pypi.org/project/alphashape/
+        def compute_concave_hull(geometry, alpha=1.5):
+            if isinstance(geometry, MultiPolygon):
+                coords = []
+                for polygon in geometry.geoms:
+                    coords.extend(polygon.exterior.coords)
+            elif isinstance(geometry, Polygon):
+                coords = list(geometry.exterior.coords)
+            else:
+                raise ValueError("Geometry must be polygon or multipolygon")
+
+            if len(coords) < 3:
+                return geometry
+
+            concave_hull = alphashape.alphashape(coords,alpha)
+            return concave_hull
+
+        #nbac_buff['concave_hull'] = nbac_buff.geometry.apply(compute_concave_hull)
+        #nbac_buff_concavh9 = nbac_buff.geometry.apply(lambda geom: compute_concave_hull(geom, alpha=0))
+        #nbac_buff_concavh1 = nbac_buff.geometry.apply(lambda geom: compute_concave_hull(geom, alpha=0.1))
+        nbac_buff_concavh15 = nbac_buff.geometry.apply(lambda geom: compute_concave_hull(geom, alpha=1.5))
+
+        # plot 317 as an example
+        #target_id = 317.0
+        #index = nbac_buff[nbac_buff['NFIREID']==310.0].index
+        #row1 = nbac_buff_concavh1.loc[index]
+       # row2 = nbac_buff_concavh15.loc[index]
+        #row3 = nbac_buff_concavh9.loc[index]
+
+        # Plot the geometries on the same axis
+        #fig, ax = plt.subplots(figsize=(10, 10))
+
+        # Plot each geometry with a different color and label
+        #row1.plot(ax=ax, color='blue', label='DataFrame 1')
+        #row3.plot(ax=ax, color='red', label='DataFrame 2')
+        #row2.plot(ax=ax, color='green', label='DataFrame 3')
+
+        # Add a legend and title
+        #ax.legend()
+        #ax.set_title(f"Comparison of Geometries for NFIREID 317.0")
+
+        #plt.savefig('test-compare.png')
+
+        print('test')
+        nbac_buff.to_file(shp_dir + '\\' + 'nbac-buff-' + str(doi_firms) + '.shp')
+        nbac_buff_concavh15.to_file(shp_dir + '\\' + 'nbac-buff-concave15' + str(doi_firms) + '.shp')
         nfdb_buff.to_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
         pers_hs_cad_buff.to_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
 
-        # concat all perimeters into one dataframe for ease of use
-        nbac_buff_conc['perim-source'] = 'NBAC'
+        #nbac_buff = gpd.read_file(shp_dir + '\\' + 'nbac-buff.shp')
+        #nfdb_buff = gpd.read_file(shp_dir + '\\' + 'nfdb-buff.shp')
+        #pers_hs_cad_buff = gpd.read_file(shp_dir + '\\' + 'pers-hs-cad-buff.shp')
+
+        # Add source name to col called "perim-source" for ease of use later
+        nbac_buff['perim-source'] = 'NBAC'
         nfdb_buff['perim-source'] = 'NFDB'
         pers_hs_cad_buff['perim-source'] = 'PH'
-        df_perims = pd.concat([nbac_buff_conc, nfdb_buff, pers_hs_cad_buff])
+
+        # Append all sources together
+        df_perims = pd.concat([nbac_buff, nfdb_buff, pers_hs_cad_buff])
 
         # Create a bounding box around Canada (this will include some of the States, but we'll fix this later)
         ne = gpd.read_file(nat_earth_shp)
-        cad = ne[ne['ADMIN'] == 'Canada']
+        cad = ne[ne['ADMIN']=='Canada']
         bbox_coords = cad.bounds
         bbox_coords = bbox_coords.reset_index()
         coords = f"{bbox_coords['minx'][0]},{bbox_coords['miny'][0]},{bbox_coords['maxx'][0]},{bbox_coords['maxy'][0]}"
 
+
+        ### HOTSPOTS
+
         # Pull hotspots from FIRMS
         df_hotspots = fetch_viirs_hotspots(coords, doi_firms, cad)
 
+        # TODO: Need to make sure that there are no "holes" within the perimeters
+        # Even with buffering I'm still missing some
         # Flag hotspots outside of boundaries and clean df
         tp_fp_flags = gpd.sjoin(df_hotspots, df_perims, predicate='within', how='left')
         col_index = tp_fp_flags.columns.get_loc('index_right0')
-        tp_fp_flags_sub = tp_fp_flags.iloc[:, 0:col_index + 1]
-
-        # Clean up the labelling for consistency
+        tp_fp_flags_sub = tp_fp_flags.iloc[:, 0:col_index+1]
         tp_fp_flags_sub['NBAC-ID'] = tp_fp_flags['NFIREID']
         tp_fp_flags_sub['PH-ID'] = tp_fp_flags['gid']
         tp_fp_flags_sub['NFDB-ID'] = tp_fp_flags['NFDBFIREID']
@@ -383,31 +324,32 @@ if __name__ == "__main__":
         tp_fp_flags_sub.loc[tp_fp_flags_sub.index_right0.isnull(), 'Class'] = 0
 
         # Add a column that identifies the closest TP
-        tp = tp_fp_flags_sub[tp_fp_flags_sub['Class'] == 1]
-        fp = tp_fp_flags_sub[tp_fp_flags_sub['Class'] == 0]
+        tp = tp_fp_flags_sub[tp_fp_flags_sub['Class']==1]
+        fp = tp_fp_flags_sub[tp_fp_flags_sub['Class']==0]
         print('The number of false positives is ' + str(len(fp)))
 
         # Determine the closest perimeter to each false positive (if less than max distance)
         # if > max distance, cluster points together according to max distance
         fp = fp.to_crs(epsg=3978)
         tp = tp.to_crs(epsg=3978)
+
         print('Determining closest perimeter within max distance of ' + str(max_distance))
-        fp_w_flag = kdnearest(fp, tp)
+        fp_w_flag = ckdnearest(fp, tp)
         fp_w_flag = fp_w_flag.dropna(axis=1, how='all')
         # reset the perim_source to none if farther than 2000 m
         fp_w_flag.loc[fp_w_flag['dist'] > max_distance, 'perim-source'] = "NONE"
 
         # Create sub dataframes for each source-type
-        NBAC_fp = fp_w_flag[fp_w_flag['perim-source'] == 'NBAC']
+        NBAC_fp = fp_w_flag[fp_w_flag['perim-source']=='NBAC']
         NBAC_fp = NBAC_fp.dropna(axis=1, how='all')
 
-        NFDB_fp = fp_w_flag[fp_w_flag['perim-source'] == 'NFDB']
+        NFDB_fp = fp_w_flag[fp_w_flag['perim-source']=='NFDB']
         NFDB_fp = NFDB_fp.dropna(axis=1, how='all')
 
-        pers_hs_fp = fp_w_flag[fp_w_flag['perim-source'] == 'PH']
+        pers_hs_fp = fp_w_flag[fp_w_flag['perim-source']=='PH']
         pers_hs_fp = pers_hs_fp.dropna(axis=1, how='all')
 
-        none_fp = fp_w_flag[fp_w_flag['perim-source'] == 'NONE']
+        none_fp = fp_w_flag[fp_w_flag['perim-source']=='NONE']
         none_fp = none_fp.dropna(axis=1, how='all')
 
         print('Plotting NBAC, PH, NFDB, and clusters away from known perimeters')
@@ -420,9 +362,11 @@ if __name__ == "__main__":
         if len(NFDB_fp) >= 1:
             plot_fp(NFDB_fp, 'NFDB-ID', 'NFDBFIREID', 'NFDB', nfdb_buff, doi_firms)
 
-        # DBScan Clustering
+
+        # DBSCAN Clustering for the points with no boundary within the maximum distance
         # Note that the crs for the undefined clusters will be EPSG:4326 because the shapely geometry column is the only
         # col affected by "to_crs"
+
         coords = none_fp[['longitude', 'latitude']].to_numpy()
         kms_per_radian = 6371.0088
         epsilon = 2 / kms_per_radian
@@ -430,15 +374,80 @@ if __name__ == "__main__":
         cluster_labels = db.labels_
         num_clusters = len(set(cluster_labels))
         clusters = pd.Series([coords[cluster_labels == n] for n in range(num_clusters)])
+
         clusters_df = {"points": clusters}
         clusters_df = pd.DataFrame(clusters_df)
 
         def array_to_multipoint(array):
             return MultiPoint(array)
 
+        # something is wrong here, the coordinates are swapped
+
         clusters_df['multipoint'] = clusters_df['points'].apply(array_to_multipoint)
+
         # Remove empty clusters that were indicated by DBSCAN
         clusters_df = clusters_df[clusters_df['multipoint'].apply(lambda x: not x.is_empty)]
+
+        """
+        # My old clustering algorithm
+        
+        cluster_df = gpd.GeoDataFrame(columns=none_fp.columns)
+    
+        cluster_df['cluster_id'] = 0
+        if len(none_fp) >= 1:
+    
+            print('Clustering fp > ' +str(max_distance) + ' from known perimeters')
+    
+            # Buffer false positives in the "none" group by max distance
+            none_fp = none_fp.to_crs(epsg=3978)
+            none_fp = none_fp.reset_index()
+            buffers = none_fp.geometry.buffer(max_distance)
+    
+            # Create an empty list to store intersections
+            intersections = []
+    
+            # Perform pairwise intersection checks to see what fp's are close to each other
+            for i in range(len(buffers)):
+                for j in range(i + 1, len(buffers)):  # Only check upper triangle (avoid duplicates)
+                    if buffers.iloc[i].intersects(buffers.iloc[j]):
+                        intersections.append((i, j))
+    
+            # create a dataframe of intersections
+            int_df = pd.DataFrame(intersections)
+    
+            # if the index val within a cluster is also within another cluster, merge them
+            # (this avoids duplicate clusters where points are > max distance individually, but where they actually
+            # belong to the same cluster
+            # Using networkx package in python which does network analysis
+            graph = Graph()
+            for _, group in int_df.groupby(0):
+                values = group[1].tolist()
+                for i in range(len(values)):
+                    for j in range(i + 1, len(values)):
+                        graph.add_edge(values[i], values[j])
+    
+            components = connected_components(graph)
+            merged_groups = [set(component) for component in components]
+    
+            cols = none_fp.columns
+            for idx, fire in enumerate(merged_groups):
+    
+                # get rows with these indices from none_fp
+                df_temp = none_fp.loc[list(merged_groups[idx])]
+                df_temp['cluster_id'] = idx
+                cluster_df = pd.concat([cluster_df, df_temp])
+    
+                if len(df_temp) > 3:
+    
+                    df_temp = df_temp.to_crs(epsg=3978)
+    
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    df_temp.plot(ax=ax, color='red')
+                    plt.title('Cluster #: ' + str(idx))
+                    plt.savefig(plot_output_dir + '\\' + 'cluster-' + str(idx) + '.png')
+                    plt.close()
+                    
+        """
 
         # Create one dataframe for all aggregated fp's
         NBAC_agg = gpd.GeoDataFrame(columns=NBAC_fp.columns)
@@ -454,7 +463,7 @@ if __name__ == "__main__":
         if len(none_fp) > 0:
             cluster_agg = gpd.GeoDataFrame(clusters_df, geometry='multipoint', crs="EPSG:4326")
             cluster_agg = cluster_agg.reset_index()
-            cluster_agg = cluster_agg.rename(columns={"index": "id"})
+            cluster_agg = cluster_agg.rename(columns={"index" : "id"})
             cluster_agg = cluster_agg.dissolve(by='id', aggfunc='sum')
             cluster_agg = cluster_agg.reset_index()
             cluster_agg['source'] = 'None'
@@ -480,12 +489,25 @@ if __name__ == "__main__":
             pers_hs_agg = pers_hs_agg.rename(columns={"PH-ID": "id"})
             pers_hs_agg = pers_hs_agg.to_crs('EPSG:4326')
 
-        # concatenate perimeters together because NBAC sometimes uses the same fire ID for multiple rows
-        if len(NBAC_agg) > 0:
-            nbac_4326 = nbac_buff_conc.to_crs("EPSG:4326")
-            NBAC_agg['fire-perimeter'] = concat_perims(NBAC_agg, nbac_4326, 'NFIREID')
+        # Add pathway to NBAC or NFDB fire polygon to output shape so I can add in geemap
+        # I guess I need to actually assign it the buffered perimeter, not by ID because there's multiple..
+        # No, what I did was right because the clusters are assigned to a specific ID
+        # I'm not sure why they appear to be overlapping though... must be an error
+        # It's the way gee is reading in the multipolygon object... I wonder if there's a better way
 
-        # Concat all dataframes together
+        # need to convert the epsg first before doing this, but it works
+        if len(NBAC_agg) > 0:
+            nbac_4326 = nbac.to_crs("EPSG:4326")
+            NBAC_agg['fire-perimeter'] = NBAC_agg['id'].apply(
+                lambda x: nbac_4326.loc[nbac_4326['NFIREID'] == x, 'geometry'].values[0] if not nbac_4326.loc[
+                    nbac_4326['NFIREID'] == x, 'geometry'].empty else None)
+
+        if len(NFDB_agg) > 0:
+            nfdb_4326 = nfdb.to_crs("EPSG:4326")
+            NFDB_agg['fire-perimeter'] = NFDB_agg['id'].apply(
+                lambda x: nfdb_4326.loc[nfdb_4326['NFIREID'] == x, 'geometry'].values[0] if not nfdb_4326.loc[
+                    nfdb_4326['NFIREID'] == x, 'geometry'].empty else None)
+
         fp_all = pd.concat([NBAC_agg, cluster_agg, NFDB_agg, pers_hs_agg])
         fp_all = fp_all.reset_index(drop=True)
 
@@ -497,4 +519,9 @@ if __name__ == "__main__":
 
         fp_all.to_excel(df_dir + '\\' + 'all-false-positives-' + str(dois_firms[idx]) + '.xlsx', index=False)
 
-        print('Done ' + str(dois_firms[idx]))
+        # TODO: Add a flag for each hot spot if it had a high scan angle
+        # TODO: Add flag for if it's on the E or W of the closest TP
+
+    print('Done')
+
+
