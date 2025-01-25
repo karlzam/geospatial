@@ -346,6 +346,7 @@ if __name__ == "__main__":
         geom = nbac_buff_conc.geometry.apply(lambda geom: compute_concave_hull(geom, alpha=1.5))
         nbac_buff_conc['geometry'] = geom
 
+        # TODO: POLYGONS BEING CHOPPED FOR SOME REASON
         # save files to shapefile dir
         nbac_buff_conc.to_file(shp_dir + '\\' + 'nbac-buff-concav' + str(doi_firms) + '.shp')
         nfdb_buff.to_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
@@ -355,6 +356,7 @@ if __name__ == "__main__":
         nbac_buff_conc['perim-source'] = 'NBAC'
         nfdb_buff['perim-source'] = 'NFDB'
         pers_hs_cad_buff['perim-source'] = 'PH'
+
         df_perims = pd.concat([nbac_buff_conc, nfdb_buff, pers_hs_cad_buff])
 
         # Create a bounding box around Canada (this will include some of the States, but we'll fix this later)
@@ -364,12 +366,15 @@ if __name__ == "__main__":
         bbox_coords = bbox_coords.reset_index()
         coords = f"{bbox_coords['minx'][0]},{bbox_coords['miny'][0]},{bbox_coords['maxx'][0]},{bbox_coords['maxy'][0]}"
 
+        print('Pulling hotspots')
         # Pull hotspots from FIRMS
         df_hotspots = fetch_viirs_hotspots(coords, doi_firms, cad)
 
         # Flag hotspots outside of boundaries and clean df
         tp_fp_flags = gpd.sjoin(df_hotspots, df_perims, predicate='within', how='left')
         col_index = tp_fp_flags.columns.get_loc('index_right0')
+
+        # THIS LOOKS NORMAL
         tp_fp_flags_sub = tp_fp_flags.iloc[:, 0:col_index + 1]
 
         # Clean up the labelling for consistency
@@ -389,10 +394,16 @@ if __name__ == "__main__":
 
         # Determine the closest perimeter to each false positive (if less than max distance)
         # if > max distance, cluster points together according to max distance
-        fp = fp.to_crs(epsg=3978)
-        tp = tp.to_crs(epsg=3978)
+
+        # TODO: IT'S THIS STEP - I'M NOT SURE WHY ONE OF THEM ISN'T WORKING
+        # ONE OF THE POINTS IS IN THE WRONG LAT, LONG ORDER...
+        #fp = fp.to_crs(epsg=3978)
+        #tp = tp.to_crs(epsg=3978)
+        # TODO: BUG WITH DISTANCES, MUST BE MISSING A CONVERSION SOMEWHERE
+        # I see that the fp, tp is inconsistent...
         print('Determining closest perimeter within max distance of ' + str(max_distance))
         fp_w_flag = kdnearest(fp, tp)
+        print('test')
         fp_w_flag = fp_w_flag.dropna(axis=1, how='all')
         # reset the perim_source to none if farther than 2000 m
         fp_w_flag.loc[fp_w_flag['dist'] > max_distance, 'perim-source'] = "NONE"
@@ -412,7 +423,7 @@ if __name__ == "__main__":
 
         print('Plotting NBAC, PH, NFDB, and clusters away from known perimeters')
         if len(NBAC_fp) >= 1:
-            plot_fp(NBAC_fp, 'NBAC-ID', 'NFIREID', 'NBAC', nbac_buff, doi_firms)
+            plot_fp(NBAC_fp, 'NBAC-ID', 'NFIREID', 'NBAC', nbac_buff_conc, doi_firms)
 
         if len(pers_hs_fp) >= 1:
             plot_fp(pers_hs_fp, 'PH-ID', 'gid', 'pers-hs', pers_hs_cad_buff, doi_firms)
@@ -420,6 +431,7 @@ if __name__ == "__main__":
         if len(NFDB_fp) >= 1:
             plot_fp(NFDB_fp, 'NFDB-ID', 'NFDBFIREID', 'NFDB', nfdb_buff, doi_firms)
 
+        print('DBScan Clustering')
         # DBScan Clustering
         # Note that the crs for the undefined clusters will be EPSG:4326 because the shapely geometry column is the only
         # col affected by "to_crs"
@@ -479,6 +491,8 @@ if __name__ == "__main__":
             pers_hs_agg['source'] = 'PH'
             pers_hs_agg = pers_hs_agg.rename(columns={"PH-ID": "id"})
             pers_hs_agg = pers_hs_agg.to_crs('EPSG:4326')
+
+        print('test')
 
         # concatenate perimeters together because NBAC sometimes uses the same fire ID for multiple rows
         if len(NBAC_agg) > 0:
