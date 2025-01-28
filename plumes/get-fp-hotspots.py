@@ -507,5 +507,6 @@ if __name__ == "__main__":
 
         #fp_all.to_excel(df_dir + '\\' + 'all-false-positives-' + str(dois_firms[idx]) + '.xlsx', index=False)
         fp_all.to_csv(df_dir + '\\' + 'all-false-positives-' + str(dois_firms[idx]) + '.csv', index=False)
+        fp_all.to_excel(df_dir + '\\' + 'all-false-positives-manual' + str(dois_firms[idx]) + '.xlsx', index=False)
 
         print('Done ' + str(dois_firms[idx]))
