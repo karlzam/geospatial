@@ -5,13 +5,10 @@ get-fp-hotspots.py
 This script investigates hotspot detections from the VIIRS instrument. It:
 1. Loads NBAC, NFDB, and persistent hotspot polygons for a date of interest
 2. Buffers polygons by a set distance
-3. Removes inner islands from buffered polygons
-4. Grabs VIIRS FIRMS hotspots for all of Canada
-5. Labels hotspots as true or false positive if within a known buffered perimeter
-6. Assigns fire ID (NBAC, NFDB, or persistent hotspot) to false positives within maximum distance from the closest
-perimeter
-7. Clusters fp's using DBScan (min points 3) not within maximum distance to a known perimeter
-8. Exports csv file with relevant information for use in geemap script (inspect-fp.ipynb)
+3. Computes a concave perimeter from the buffered perimeters (these can be multipolygon objects, so we convert to a
+   single polygon
+3. Grabs VIIRS FIRMS hotspots for all of Canada
+4.
 
 Author: Karlee Zammal the Party Mammal
 Contact: karlee.zammit@nrcan-rncan.gc.ca
@@ -373,18 +370,32 @@ if __name__ == "__main__":
         nfdb_buff = project_and_buffer(nfdb_doi, target_epsg, buffer_dist)
         pers_hs_cad_buff = project_and_buffer(pers_hs_cad, target_epsg, buffer_dist)
 
-        # remove inner islands from buffered perimeters
+        # Correct usage
         nbac_buff_filled = remove_holes_from_geometries(nbac_buff)
 
+        # compute concave buffers (only NBAC as NFDB & persistent are points)
+        #nbac_buff_conc = nbac_buff.copy()
+        #geom = nbac_buff_conc.geometry.apply(lambda geom: compute_concave_hull(geom, alpha=1.5))
+        #nbac_buff_conc['geometry'] = geom
         # save files to shapefile dir
         nbac_buff_filled.to_file(shp_dir + '\\' + 'nbac-buff-filled' + str(doi_firms) + '.shp')
         nfdb_buff.to_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
         pers_hs_cad_buff.to_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
 
+        #nbac_buff_conc = gpd.read_file(shp_dir + '\\' + 'nbac-buff-concav' + str(doi_firms) + '.shp')
+        #nfdb_buff = gpd.read_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
+        #pers_hs_cad_buff = gpd.read_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
+
+        # SOMETHING WRONG WITH HULL?
+        #nbac_buff_conc = nbac_buff
+
         # concat all perimeters into one dataframe for ease of use
+        #nbac_buff_conc['perim-source'] = 'NBAC'
         nbac_buff_filled['perim-source'] = 'NBAC'
         nfdb_buff['perim-source'] = 'NFDB'
         pers_hs_cad_buff['perim-source'] = 'PH'
+
+        #df_perims = pd.concat([nbac_buff_conc, nfdb_buff, pers_hs_cad_buff])
         df_perims = pd.concat([nbac_buff_filled, nfdb_buff, pers_hs_cad_buff])
 
         # Create a bounding box around Canada (this will include some of the States, but we'll fix this later)
@@ -422,8 +433,12 @@ if __name__ == "__main__":
 
         # Determine the closest perimeter to each false positive (if less than max distance)
         # if > max distance, cluster points together according to max distance
+
+        # ONE OF THE POINTS IS IN THE WRONG LAT, LONG ORDER...
+        # Piyush says this is actually probably correct
         fp = fp.to_crs(epsg=3978)
         tp = tp.to_crs(epsg=3978)
+        # I see that the fp, tp is inconsistent...
         print('Determining closest perimeter within max distance of ' + str(max_distance))
         fp_w_flag = kdnearest(fp, tp)
         fp_w_flag = fp_w_flag.dropna(axis=1, how='all')
