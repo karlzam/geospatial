@@ -343,6 +343,8 @@ if __name__ == "__main__":
         # reset the perim_source to none if farther than 2000 m
         fp_w_flag.loc[fp_w_flag['dist'] > max_distance, 'perim-source'] = "NONE"
 
+        print('test')
+
         # Create sub dataframes for each source-type
         NBAC_fp = fp_w_flag[fp_w_flag['perim-source']=='NBAC']
         NBAC_fp = NBAC_fp.dropna(axis=1, how='all')
@@ -355,6 +357,8 @@ if __name__ == "__main__":
 
         none_fp = fp_w_flag[fp_w_flag['perim-source']=='NONE']
         none_fp = none_fp.dropna(axis=1, how='all')
+
+        print('test')
 
         print('Plotting NBAC, PH, NFDB, and clusters away from known perimeters')
         if len(NBAC_fp) >= 1:

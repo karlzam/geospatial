@@ -32,7 +32,7 @@ import alphashape
 # Date of Interest
 # dois = ['2023/09/18', '2023/09/19', '2023/09/20','2023/09/21', '2023/09/22', '2023/09/23',
 #        '2023/09/24', '2023/09/25', '2023/09/26', '2023/09/27', '2023/09/28', '2023/09/29']
-dois = ['2023/09/24']
+dois = ['2023/09/23']
 
 # Buffer Distance
 # This distance is applied to the NBAC, NFDB, and persistent hotspot polygons
@@ -341,23 +341,63 @@ if __name__ == "__main__":
         nfdb_buff = project_and_buffer(nfdb_doi, target_epsg, buffer_dist)
         pers_hs_cad_buff = project_and_buffer(pers_hs_cad, target_epsg, buffer_dist)
 
-        # compute concave buffers (only NBAC as NFDB & persistent are points)
-        nbac_buff_conc = nbac_buff.copy()
-        geom = nbac_buff_conc.geometry.apply(lambda geom: compute_concave_hull(geom, alpha=1.5))
-        nbac_buff_conc['geometry'] = geom
 
-        # TODO: POLYGONS BEING CHOPPED FOR SOME REASON
+        def remove_holes_from_geometries(geodataframe):
+            """
+            Remove holes from all polygons in the geometry column of a GeoDataFrame.
+
+            Parameters:
+                geodataframe (gpd.GeoDataFrame): Input GeoDataFrame with a geometry column.
+
+            Returns:
+                gpd.GeoDataFrame: A new GeoDataFrame with polygons having no holes.
+            """
+
+            def extract_exterior(geometry):
+                if geometry is None:
+                    return None
+                if geometry.geom_type == "Polygon":
+                    # Return a new Polygon using only the exterior coordinates
+                    return Polygon(geometry.exterior)
+                elif geometry.geom_type == "MultiPolygon":
+                    # Create a new MultiPolygon from the exteriors of all polygons
+                    return MultiPolygon([Polygon(p.exterior) for p in geometry.geoms])
+                else:
+                    # Return the geometry as-is if it's not a Polygon or MultiPolygon
+                    return geometry
+
+            # Apply the function to the geometry column
+            geodataframe['geometry'] = geodataframe['geometry'].apply(extract_exterior)
+            return geodataframe
+
+
+        # Correct usage
+        nbac_buff_filled = remove_holes_from_geometries(nbac_buff)
+
+        # compute concave buffers (only NBAC as NFDB & persistent are points)
+        #nbac_buff_conc = nbac_buff.copy()
+        #geom = nbac_buff_conc.geometry.apply(lambda geom: compute_concave_hull(geom, alpha=1.5))
+        #nbac_buff_conc['geometry'] = geom
         # save files to shapefile dir
-        nbac_buff_conc.to_file(shp_dir + '\\' + 'nbac-buff-concav' + str(doi_firms) + '.shp')
+        nbac_buff_filled.to_file(shp_dir + '\\' + 'nbac-buff-filled' + str(doi_firms) + '.shp')
         nfdb_buff.to_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
         pers_hs_cad_buff.to_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
 
+        #nbac_buff_conc = gpd.read_file(shp_dir + '\\' + 'nbac-buff-concav' + str(doi_firms) + '.shp')
+        #nfdb_buff = gpd.read_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
+        #pers_hs_cad_buff = gpd.read_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
+
+        # SOMETHING WRONG WITH HULL?
+        #nbac_buff_conc = nbac_buff
+
         # concat all perimeters into one dataframe for ease of use
-        nbac_buff_conc['perim-source'] = 'NBAC'
+        #nbac_buff_conc['perim-source'] = 'NBAC'
+        nbac_buff_filled['perim-source'] = 'NBAC'
         nfdb_buff['perim-source'] = 'NFDB'
         pers_hs_cad_buff['perim-source'] = 'PH'
 
-        df_perims = pd.concat([nbac_buff_conc, nfdb_buff, pers_hs_cad_buff])
+        #df_perims = pd.concat([nbac_buff_conc, nfdb_buff, pers_hs_cad_buff])
+        df_perims = pd.concat([nbac_buff_filled, nfdb_buff, pers_hs_cad_buff])
 
         # Create a bounding box around Canada (this will include some of the States, but we'll fix this later)
         ne = gpd.read_file(nat_earth_shp)
@@ -395,15 +435,13 @@ if __name__ == "__main__":
         # Determine the closest perimeter to each false positive (if less than max distance)
         # if > max distance, cluster points together according to max distance
 
-        # TODO: IT'S THIS STEP - I'M NOT SURE WHY ONE OF THEM ISN'T WORKING
         # ONE OF THE POINTS IS IN THE WRONG LAT, LONG ORDER...
-        #fp = fp.to_crs(epsg=3978)
-        #tp = tp.to_crs(epsg=3978)
-        # TODO: BUG WITH DISTANCES, MUST BE MISSING A CONVERSION SOMEWHERE
+        # Piyush says this is actually probably correct
+        fp = fp.to_crs(epsg=3978)
+        tp = tp.to_crs(epsg=3978)
         # I see that the fp, tp is inconsistent...
         print('Determining closest perimeter within max distance of ' + str(max_distance))
         fp_w_flag = kdnearest(fp, tp)
-        print('test')
         fp_w_flag = fp_w_flag.dropna(axis=1, how='all')
         # reset the perim_source to none if farther than 2000 m
         fp_w_flag.loc[fp_w_flag['dist'] > max_distance, 'perim-source'] = "NONE"
@@ -423,7 +461,8 @@ if __name__ == "__main__":
 
         print('Plotting NBAC, PH, NFDB, and clusters away from known perimeters')
         if len(NBAC_fp) >= 1:
-            plot_fp(NBAC_fp, 'NBAC-ID', 'NFIREID', 'NBAC', nbac_buff_conc, doi_firms)
+            #plot_fp(NBAC_fp, 'NBAC-ID', 'NFIREID', 'NBAC', nbac_buff_conc, doi_firms)
+            plot_fp(NBAC_fp, 'NBAC-ID', 'NFIREID', 'NBAC', nbac_buff_filled, doi_firms)
 
         if len(pers_hs_fp) >= 1:
             plot_fp(pers_hs_fp, 'PH-ID', 'gid', 'pers-hs', pers_hs_cad_buff, doi_firms)
@@ -492,11 +531,10 @@ if __name__ == "__main__":
             pers_hs_agg = pers_hs_agg.rename(columns={"PH-ID": "id"})
             pers_hs_agg = pers_hs_agg.to_crs('EPSG:4326')
 
-        print('test')
-
         # concatenate perimeters together because NBAC sometimes uses the same fire ID for multiple rows
         if len(NBAC_agg) > 0:
-            nbac_4326 = nbac_buff_conc.to_crs("EPSG:4326")
+            #nbac_4326 = nbac_buff_conc.to_crs("EPSG:4326")
+            nbac_4326 = nbac_buff_filled.to_crs("EPSG:4326")
             NBAC_agg['fire-perimeter'] = concat_perims(NBAC_agg, nbac_4326, 'NFIREID')
 
         # Concat all dataframes together
