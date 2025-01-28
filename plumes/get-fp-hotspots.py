@@ -27,7 +27,6 @@ import numpy as np
 from scipy.spatial import KDTree
 from sklearn.cluster import DBSCAN
 from shapely.geometry import MultiPoint, MultiPolygon, Polygon
-import alphashape
 
 
 ###### User Inputs ######
@@ -206,31 +205,6 @@ def plot_fp(fp_df, col_id, orig_id, type_str, buffer_df, date_label):
         plt.title(type_str + ' ID: ' + str(fire))
         plt.savefig(plot_output_dir + '\\' + type_str + '-' + str(fire) + '-' + str(date_label) + '.png')
         plt.close()
-
-
-def compute_concave_hull(geometry, alpha=1.5):
-    """
-    Compute concave perimeter instead of using more simple convex hull
-    :param geometry:
-    :param alpha: smoothing value, zero = convex hull, larger = more detailed, but careful
-    as it will omit points eventually
-    :return: concave perimeter
-    """
-    if isinstance(geometry, MultiPolygon):
-        coords = []
-        for polygon in geometry.geoms:
-            coords.extend(polygon.exterior.coords)
-    elif isinstance(geometry, Polygon):
-        coords = list(geometry.exterior.coords)
-    else:
-        raise ValueError("Geometry must be polygon or multipolygon")
-
-    if len(coords) < 3:
-        return geometry
-
-    # https://pypi.org/project/alphashape/
-    concave_hull = alphashape.alphashape(coords,alpha)
-    return concave_hull
 
 
 def remove_holes_from_geometries(geodataframe):
