@@ -547,6 +547,8 @@ if __name__ == "__main__":
         fp_all['start_date'] = doi_firms
         fp_all['end_date'] = doi_firms_2
 
+        print('test')
+
         fp_all.to_excel(df_dir + '\\' + 'all-false-positives-' + str(dois_firms[idx]) + '.xlsx', index=False)
 
         print('Done ' + str(dois_firms[idx]))
