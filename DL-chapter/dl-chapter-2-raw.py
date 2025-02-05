@@ -44,9 +44,6 @@ yoi = 2023
 FIRMS_map_key = 'e865c77bb60984ab516517cd4cdadea0'
 doi_firms = '2023-09-23'
 
-# Buffer distance
-buffer_dist = 375*math.sqrt(2)
-
 
 ###### Code ######
 
@@ -109,42 +106,13 @@ pers_hs = gpd.read_file(pers_hs_shp)
 cad_provs = ['NL', 'PE', 'NS', 'NB', 'QC', 'ON', 'MB', 'SK', 'AB', 'BC', 'YT', 'NT', 'NU']
 pers_hs_cad = pers_hs[pers_hs['prov'].isin(cad_provs)]
 
-
-### Apply buffers to all sounds to account for hotspot resolution
-# NAD83 (EPSG 3978) is commonly used for Canada
-# Helper function to project and buffer geometries
-def project_and_buffer(gdf, target_epsg, buffer_dist=buffer_dist):
-    gdf_projected = gdf.to_crs(target_epsg)
-    gdf_projected['geometry'] = gdf_projected['geometry'].buffer(buffer_dist)
-    gdf_projected = gdf_projected.to_crs(epsg=4326)
-    return gdf_projected
-
-# Commenting this out because it takes a few minutes to run
-#target_epsg = 3978
-#nbac_buff = project_and_buffer(nbac_doi, target_epsg)
-#nfdb_buff = project_and_buffer(nfdb_doi, target_epsg)
-#pers_hs_cad_buff = project_and_buffer(pers_hs_cad, target_epsg)
-#nbac_buff.to_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\nbac-buff.shp')
-#nfdb_buff.to_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\nfdb-buff.shp')
-#pers_hs_cad_buff.to_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\pers-hs-cad-buff.shp')
-
-nbac_buff = gpd.read_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\nbac-buff.shp')
-nfdb_buff = gpd.read_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\nfdb-buff.shp')
-pers_hs_cad_buff = gpd.read_file(r'C:\Users\kzammit\Documents\DL-chapter\shp\pers-hs-cad-buff.shp')
-
 nbac_doi = nbac_doi.to_crs(epsg=4326)
 nfdb_doi = nfdb_doi.to_crs(epsg=4326)
-
-# check the buffering was done correctly
-#fig, ax = plt.subplots(figsize=(10,8))
-#nbac_buff.plot(ax=ax, color='red', linewidth=1)
-#nbac_doi.plot(ax=ax, color='black', linewidth=1)
-#plt.savefig('test.png')
+pers_hs_doi = pers_hs_cad.to_crs(epsg=4326)
 
 # Join them all into a single dataframe (it's ok that it's messy, we'll just be using the geometry column)
 # The epsg code are already the same for all (defined in the function)
-df_perims = pd.concat([nbac_buff, nfdb_buff, pers_hs_cad_buff])
-
+df_perims = pd.concat([nbac_doi, nfdb_doi, pers_hs_doi])
 
 ### Canada
 ne = gpd.read_file(nat_earth_shp)
@@ -154,7 +122,6 @@ cad = ne[ne['ADMIN']=='Canada']
 bbox_coords = cad.bounds
 bbox_coords = bbox_coords.reset_index()
 coords = f"{bbox_coords['minx'][0]},{bbox_coords['miny'][0]},{bbox_coords['maxx'][0]},{bbox_coords['maxy'][0]}"
-
 
 ### Hotspots
 # Only SNPP and NOAA20 are available for 2023 (NOAA21 came after)
@@ -210,34 +177,18 @@ joined['Class'] = 1
 joined.loc[joined.index_right0.isnull(), 'Class'] = 0
 joined = joined.drop(['index', 'index_right0', 'type', 'geometry'], axis=1)
 
-# Balance dataset by randomly dropping positive examples
-num_fp = (joined['Class'] == 0).sum()
-fp_df = joined[joined['Class'] == 0]
-
-num_tp = (joined['Class'] == 1).sum()
-tp_df = joined[joined['Class'] == 1]
-
-if num_tp > num_fp:
-    fp_sample = fp_df.sample(n=num_fp, random_state=42)
-    tp_sample = tp_df.sample(n=num_fp, random_state=42)
-
-elif num_fp > num_tp:
-    fp_sample = fp_df.sample(n=num_tp, random_state=42)
-    tp_sample = tp_df.sample(n=num_tp, random_state=42)
-
-df = pd.concat([fp_sample, tp_sample])
-
 # Drop non-numeric columns
-df = df.drop(['acq_date', 'satellite', 'instrument', 'version'], axis=1)
+joined = joined.drop(['acq_date', 'satellite', 'instrument', 'version'], axis=1)
 
 # Change day and night into 1 (day) and 0 (night), and also sat into 1 (snpp) and 0 (noaa20)
-df['daynight'] = df['daynight'].replace({'D': 1, 'N': 0})
-df['sat'] = df['sat'].replace({'SNPP': 1, 'NOAA20': 0})
-df['confidence'] = df['confidence'].replace({'l': 0, 'n': 1, 'h': 2})
+joined['daynight'] = joined['daynight'].replace({'D': 1, 'N': 0})
+joined['sat'] = joined['sat'].replace({'SNPP': 1, 'NOAA20': 0})
+joined['confidence'] = joined['confidence'].replace({'l': 0, 'n': 1, 'h': 2})
 
-#df.to_excel(r'C:\Users\kzammit\Documents\DL-chapter\train-preprocessed.xlsx', index=False)
+#joined.to_excel(r'C:\Users\kzammit\Documents\DL-chapter\train-raw.xlsx', index=False)
 
-df.to_csv(r'C:\Users\kzammit\Documents\DL-chapter\train-preprocessed.csv', index=False)
+joined.to_csv(r'C:\Users\kzammit\Documents\DL-chapter\train-raw.csv', index=False)
+
 
 
 

@@ -358,9 +358,9 @@ final_df = final_df.drop(['YEAR'], axis=1)
 final_df = final_df.dropna()
 
 # Save the final dataframe to an Excel file
-final_df.to_excel(r'C:\Users\kzammit\Documents\DL-chapter\train-q3.xlsx', index=False)
+#final_df.to_excel(r'C:\Users\kzammit\Documents\DL-chapter\train-q3.xlsx', index=False)
 
-
+final_df.to_csv(r'C:\Users\kzammit\Documents\DL-chapter\train-q3.csv', index=False)
 
 
 

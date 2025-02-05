@@ -34,7 +34,7 @@ from shapely.geometry import MultiPoint, MultiPolygon, Polygon
 # Date of Interest
 # dois = ['2023/09/18', '2023/09/19', '2023/09/20','2023/09/21', '2023/09/22', '2023/09/23',
 #        '2023/09/24', '2023/09/25', '2023/09/26', '2023/09/27', '2023/09/28', '2023/09/29']
-dois = ['2023/09/22', '2023/09/23', '2023/09/24']
+dois = ['2023/09/23']
 
 # Buffer Distance
 # This distance is applied to the NBAC, NFDB, and persistent hotspot polygons
@@ -398,6 +398,8 @@ if __name__ == "__main__":
         # if > max distance, cluster points together according to max distance
         fp = fp.to_crs(epsg=3978)
         tp = tp.to_crs(epsg=3978)
+
+        print('test')
         print('Determining closest perimeter within max distance of ' + str(max_distance))
         fp_w_flag = kdnearest(fp, tp)
         fp_w_flag = fp_w_flag.dropna(axis=1, how='all')
