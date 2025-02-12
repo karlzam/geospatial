@@ -46,7 +46,8 @@ max_distance = 2000
 
 # NBAC Folder
 # Where the nbac shapefiles live
-nbac_folder = r'C:\Users\kzammit\Documents\shp\nbac'
+#nbac_folder = r'C:\Users\kzammit\Documents\shp\nbac'
+nbac_folder = r'C:\Users\kzammit\Documents\shp\nbac\rob-v2'
 
 # NFDB Folder and Polygon
 # At the time of writing this script, NFDB polygons were not available for 2023
@@ -267,7 +268,8 @@ if __name__ == "__main__":
     dois_firms_2 = ['-'.join(doi.split('/')[:2]) + '-' + f"{int(doi.split('/')[2]) + 1:02d}" for doi in dois]
 
     # set up arrays for nbac and nfdb (repeats for each day of interest due to how script works)
-    nbac_shps = [nbac_folder + '\\' + 'nbac_' + doi.split('/')[0] + '_20240530.shp' for doi in dois]
+    #nbac_shps = [nbac_folder + '\\' + 'nbac_' + doi.split('/')[0] + '_20240530.shp' for doi in dois]
+    nbac_shps = [nbac_folder + '\\' + 'nbac_' + doi.split('/')[0] + '_20250211.shp' for doi in dois]
     nfdb_shps = [nfdb_folder + '\\' + nfdb_shp for _ in dois]
 
     # For each date of interest (referencing each one by year even though it's just the first part of each doi)
@@ -287,6 +289,7 @@ if __name__ == "__main__":
         # If one of them is missing, the fill value is "0000/00/00"
         # Create start and end date columns from the earlier or later of the two respectively (ignoring the fill val)
 
+        """
         nbac['start_date'] = 'tbd'
 
         # If either agency or hotspot start date is empty, assign the other as the start date
@@ -323,10 +326,14 @@ if __name__ == "__main__":
         # Create a new dataframe for only fires containing the date of interest
         nbac_doi = nbac[nbac['doi'] == 1]
         nbac_doi = nbac_doi.reset_index()
+        """
 
         ### NFDB (similar steps)
         nfdb = gpd.read_file(nfdb_shps[idx])
-        nfdb_doi = nfdb[nfdb['YEAR'] == yoi]
+        # If I don't include the CNFDB year I get things from like 2002
+        nfdb = nfdb[nfdb['YEAR'] == yoi]
+
+        """
         nfdb_doi = nfdb_doi.drop(nfdb_doi[(nfdb_doi.OUT_DATE == '0000/00/00')].index)
         nfdb_doi['doi'] = 0
         nfdb_doi = nfdb_doi.assign(start_dt=lambda x: pd.to_datetime(x['REP_DATE'], format=date_format))
@@ -334,6 +341,7 @@ if __name__ == "__main__":
         nfdb_doi.loc[(nfdb_doi['start_dt'] <= date_obj) & (nfdb_doi['end_dt'] >= date_obj), "doi"] = 1
         nfdb_doi = nfdb_doi[nfdb_doi['doi'] == 1]
         nfdb_doi = nfdb_doi.reset_index()
+        """
 
         ### PERSISTENT HEAT SOURCES
         pers_hs = gpd.read_file(pers_hs_shp)
@@ -343,17 +351,23 @@ if __name__ == "__main__":
         # Buffer boundaries
         print('Buffering boundaries')
         target_epsg = 3978
-        nbac_buff = project_and_buffer(nbac_doi, target_epsg, buffer_dist)
-        nfdb_buff = project_and_buffer(nfdb_doi, target_epsg, buffer_dist)
-        pers_hs_cad_buff = project_and_buffer(pers_hs_cad, target_epsg, buffer_dist)
+        #nbac_buff = project_and_buffer(nbac_doi, target_epsg, buffer_dist)
+        #nfdb_buff = project_and_buffer(nfdb_doi, target_epsg, buffer_dist)
+        #nbac_buff = project_and_buffer(nbac, target_epsg, buffer_dist)
+        #nfdb_buff = project_and_buffer(nfdb, target_epsg, buffer_dist)
+        #pers_hs_cad_buff = project_and_buffer(pers_hs_cad, target_epsg, buffer_dist)
 
         # remove inner islands from buffered perimeters
-        nbac_buff_filled = remove_holes_from_geometries(nbac_buff)
+        #nbac_buff_filled = remove_holes_from_geometries(nbac_buff)
 
         # save files to shapefile dir
-        nbac_buff_filled.to_file(shp_dir + '\\' + 'nbac-buff-filled' + str(doi_firms) + '.shp')
-        nfdb_buff.to_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
-        pers_hs_cad_buff.to_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
+        #nbac_buff_filled.to_file(shp_dir + '\\' + 'nbac-buff-filled' + str(doi_firms) + '.shp')
+        #nfdb_buff.to_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
+        #pers_hs_cad_buff.to_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
+
+        nbac_buff_filled = gpd.read_file(shp_dir + '\\' + 'nbac-buff-filled' + str(doi_firms) + '.shp')
+        nfdb_buff = gpd.read_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
+        pers_hs_cad_buff = gpd.read_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
 
         # concat all perimeters into one dataframe for ease of use
         nbac_buff_filled['perim-source'] = 'NBAC'
@@ -374,7 +388,8 @@ if __name__ == "__main__":
 
         # Flag hotspots outside of boundaries and clean df
         tp_fp_flags = gpd.sjoin(df_hotspots, df_perims, predicate='within', how='left')
-        col_index = tp_fp_flags.columns.get_loc('index_right0')
+        #col_index = tp_fp_flags.columns.get_loc('index_right0')
+        col_index = tp_fp_flags.columns.get_loc('index_right')
 
         # THIS LOOKS NORMAL
         tp_fp_flags_sub = tp_fp_flags.iloc[:, 0:col_index + 1]
@@ -387,12 +402,18 @@ if __name__ == "__main__":
 
         # Set the class to 1 if it's a true positive, and 0 if it's a false positive (outside of the boundary)
         tp_fp_flags_sub['Class'] = 1
-        tp_fp_flags_sub.loc[tp_fp_flags_sub.index_right0.isnull(), 'Class'] = 0
+        #tp_fp_flags_sub.loc[tp_fp_flags_sub.index_right0.isnull(), 'Class'] = 0
+        tp_fp_flags_sub.loc[tp_fp_flags_sub.index_right.isnull(), 'Class'] = 0
 
         # Add a column that identifies the closest TP
         tp = tp_fp_flags_sub[tp_fp_flags_sub['Class'] == 1]
         fp = tp_fp_flags_sub[tp_fp_flags_sub['Class'] == 0]
         print('The number of false positives is ' + str(len(fp)))
+
+        tp = tp.to_crs(epsg=4326)
+        fp = fp.to_crs(epsg=4326)
+        tp.to_csv(df_dir + '\\' + 'tp-' + str(dois_firms[idx]) + '.csv', index=False)
+        fp.to_csv(df_dir + '\\' + 'fp-' + str(dois_firms[idx]) + '.csv', index=False)
 
         # Determine the closest perimeter to each false positive (if less than max distance)
         # if > max distance, cluster points together according to max distance
@@ -435,21 +456,55 @@ if __name__ == "__main__":
         # Note that the crs for the undefined clusters will be EPSG:4326 because the shapely geometry column is the only
         # col affected by "to_crs"
         coords = none_fp[['longitude', 'latitude']].to_numpy()
+
         kms_per_radian = 6371.0088
         epsilon = 2 / kms_per_radian
+
         db = DBSCAN(eps=epsilon, min_samples=3, algorithm='ball_tree', metric='haversine').fit(np.radians(coords))
         cluster_labels = db.labels_
+
+        #clusters_df = clustered_points.groupby("cluster")["index"].apply(list).reset_index()
+        #clusters_df.rename(columns={"index": "point_indices"}, inplace=True)
+
         num_clusters = len(set(cluster_labels))
         clusters = pd.Series([coords[cluster_labels == n] for n in range(num_clusters)])
         clusters_df = {"points": clusters}
         clusters_df = pd.DataFrame(clusters_df)
+
+        # get indices
+        indices = np.arange(len(coords))
+
+        # Create a DataFrame to store results
+        clustered_points = pd.DataFrame({
+            "index": indices,
+            "cluster": cluster_labels
+        })
+
+        clusters_indices = clustered_points.groupby("cluster")["index"].apply(list).reset_index()
+        clusters_indices.rename(columns={"index": "point_indices"}, inplace=True)
+
+        # merge dataframes
+        # Create clusters DataFrame with cluster labels
+        num_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)  # Exclude noise (-1)
+        clusters = pd.Series([coords[cluster_labels == n] for n in range(num_clusters)])
+
+        clusters_df = pd.DataFrame({
+            "cluster": range(num_clusters),  # Ensure the same cluster ID exists in both DataFrames
+            "points": clusters
+        })
+
+        # Merge clusters_df with clusters_indices to add point indices
+        clusters_df = clusters_df.merge(clusters_indices, on="cluster", how="left")
+
+        # Rename column for clarity
+        clusters_df.rename(columns={"point_indices": "orig_index"}, inplace=True)
 
         def array_to_multipoint(array):
             return MultiPoint(array)
 
         clusters_df['multipoint'] = clusters_df['points'].apply(array_to_multipoint)
         # Remove empty clusters that were indicated by DBSCAN
-        clusters_df = clusters_df[clusters_df['multipoint'].apply(lambda x: not x.is_empty)]
+        #clusters_df = clusters_df[clusters_df['multipoint'].apply(lambda x: not x.is_empty)]
 
         # Create one dataframe for all aggregated fp's
         NBAC_agg = gpd.GeoDataFrame(columns=NBAC_fp.columns)
@@ -461,6 +516,12 @@ if __name__ == "__main__":
             NBAC_agg = NBAC_agg.rename(columns={"NBAC-ID": "id"})
             NBAC_agg = NBAC_agg.to_crs('EPSG:4326')
 
+            # store original indices for later use
+            NBAC_fp['orig_index'] = NBAC_fp.index
+            NBAC_agg['orig_index'] = NBAC_fp.groupby('NBAC-ID')['orig_index'].apply(list).values
+
+        print('test')
+
         cluster_agg = gpd.GeoDataFrame(columns=clusters_df.columns)
         if len(none_fp) > 0:
             cluster_agg = gpd.GeoDataFrame(clusters_df, geometry='multipoint', crs="EPSG:4326")
@@ -469,9 +530,11 @@ if __name__ == "__main__":
             cluster_agg = cluster_agg.dissolve(by='id', aggfunc='sum')
             cluster_agg = cluster_agg.reset_index()
             cluster_agg['source'] = 'None'
-            cluster_agg = cluster_agg.drop(['points'], axis=1)
+            cluster_agg = cluster_agg.drop(['points', 'cluster'], axis=1)
             cluster_agg = cluster_agg.to_crs('EPSG:4326')
             cluster_agg = cluster_agg.rename(columns={"multipoint": "geometry"})
+
+            print('test')
 
         NFDB_agg = gpd.GeoDataFrame(columns=NFDB_fp.columns)
         if len(NFDB_fp) > 0:
@@ -482,6 +545,9 @@ if __name__ == "__main__":
             NFDB_agg = NFDB_agg.rename(columns={"NFDB-ID": "id"})
             NFDB_agg = NFDB_agg.to_crs('EPSG:4326')
 
+            NFDB_fp['orig_index'] = NFDB_fp.index
+            NFDB_agg['orig_index'] = NFDB_fp.groupby('NFDB-ID')['orig_index'].apply(list).values
+
         pers_hs_agg = gpd.GeoDataFrame(columns=pers_hs_fp.columns)
         if len(pers_hs_fp) > 0:
             pers_hs_agg = pers_hs_fp[['geometry', 'PH-ID']]
@@ -490,6 +556,10 @@ if __name__ == "__main__":
             pers_hs_agg['source'] = 'PH'
             pers_hs_agg = pers_hs_agg.rename(columns={"PH-ID": "id"})
             pers_hs_agg = pers_hs_agg.to_crs('EPSG:4326')
+
+            pers_hs_fp['orig_index'] = pers_hs_fp.index
+            pers_hs_agg['orig_index'] = pers_hs_fp.groupby('PH-ID')['orig_index'].apply(list).values
+
 
         # concatenate perimeters together because NBAC sometimes uses the same fire ID for multiple rows
         if len(NBAC_agg) > 0:
