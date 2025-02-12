@@ -46,7 +46,8 @@ max_distance = 2000
 
 # NBAC Folder
 # Where the nbac shapefiles live
-nbac_folder = r'C:\Users\kzammit\Documents\shp\nbac'
+#nbac_folder = r'C:\Users\kzammit\Documents\shp\nbac'
+nbac_folder = r'C:\Users\kzammit\Documents\shp\nbac\rob-v2'
 
 # NFDB Folder and Polygon
 # At the time of writing this script, NFDB polygons were not available for 2023
@@ -267,7 +268,8 @@ if __name__ == "__main__":
     dois_firms_2 = ['-'.join(doi.split('/')[:2]) + '-' + f"{int(doi.split('/')[2]) + 1:02d}" for doi in dois]
 
     # set up arrays for nbac and nfdb (repeats for each day of interest due to how script works)
-    nbac_shps = [nbac_folder + '\\' + 'nbac_' + doi.split('/')[0] + '_20240530.shp' for doi in dois]
+    #nbac_shps = [nbac_folder + '\\' + 'nbac_' + doi.split('/')[0] + '_20240530.shp' for doi in dois]
+    nbac_shps = [nbac_folder + '\\' + 'nbac_' + doi.split('/')[0] + '_20250211.shp' for doi in dois]
     nfdb_shps = [nfdb_folder + '\\' + nfdb_shp for _ in dois]
 
     # For each date of interest (referencing each one by year even though it's just the first part of each doi)
