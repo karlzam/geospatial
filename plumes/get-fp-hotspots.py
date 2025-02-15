@@ -34,7 +34,7 @@ from shapely.geometry import MultiPoint, MultiPolygon, Polygon
 # Date of Interest
 # dois = ['2023/09/18', '2023/09/19', '2023/09/20','2023/09/21', '2023/09/22', '2023/09/23',
 #        '2023/09/24', '2023/09/25', '2023/09/26', '2023/09/27', '2023/09/28', '2023/09/29']
-dois = ['2023/09/23']
+dois = ['2023/09/20', '2023/09/22', '2023/09/24', '2023/09/26']
 
 # Buffer Distance
 # This distance is applied to the NBAC, NFDB, and persistent hotspot polygons
@@ -353,21 +353,21 @@ if __name__ == "__main__":
         target_epsg = 3978
         #nbac_buff = project_and_buffer(nbac_doi, target_epsg, buffer_dist)
         #nfdb_buff = project_and_buffer(nfdb_doi, target_epsg, buffer_dist)
-        #nbac_buff = project_and_buffer(nbac, target_epsg, buffer_dist)
-        #nfdb_buff = project_and_buffer(nfdb, target_epsg, buffer_dist)
-        #pers_hs_cad_buff = project_and_buffer(pers_hs_cad, target_epsg, buffer_dist)
+        nbac_buff = project_and_buffer(nbac, target_epsg, buffer_dist)
+        nfdb_buff = project_and_buffer(nfdb, target_epsg, buffer_dist)
+        pers_hs_cad_buff = project_and_buffer(pers_hs_cad, target_epsg, buffer_dist)
 
         # remove inner islands from buffered perimeters
-        #nbac_buff_filled = remove_holes_from_geometries(nbac_buff)
+        nbac_buff_filled = remove_holes_from_geometries(nbac_buff)
 
         # save files to shapefile dir
-        #nbac_buff_filled.to_file(shp_dir + '\\' + 'nbac-buff-filled' + str(doi_firms) + '.shp')
-        #nfdb_buff.to_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
-        #pers_hs_cad_buff.to_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
+        nbac_buff_filled.to_file(shp_dir + '\\' + 'nbac-buff-filled' + str(doi_firms) + '.shp')
+        nfdb_buff.to_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
+        pers_hs_cad_buff.to_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
 
-        nbac_buff_filled = gpd.read_file(shp_dir + '\\' + 'nbac-buff-filled' + str(doi_firms) + '.shp')
-        nfdb_buff = gpd.read_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
-        pers_hs_cad_buff = gpd.read_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
+        #nbac_buff_filled = gpd.read_file(shp_dir + '\\' + 'nbac-buff-filled' + str(doi_firms) + '.shp')
+        #nfdb_buff = gpd.read_file(shp_dir + '\\' + 'nfdb-buff-' + str(doi_firms) + '.shp')
+        #pers_hs_cad_buff = gpd.read_file(shp_dir + '\\' + 'pers-hs-cad-buff-' + str(doi_firms) + '.shp')
 
         # concat all perimeters into one dataframe for ease of use
         nbac_buff_filled['perim-source'] = 'NBAC'
