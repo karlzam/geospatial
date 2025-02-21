@@ -61,6 +61,8 @@ for idx, file in enumerate(g.iterrows()):
         ax.coastlines()
         plt.savefig(os.path.join(img_dir, 'test' + str(idx) + '.png'))
 
+        print('test')
+
 # make an animated gif
 gif_dir = os.path.join(main_dir, 'gifs')
 image_files = glob.glob(os.path.join(img_dir, '*.png'))

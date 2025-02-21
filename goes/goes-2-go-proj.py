@@ -15,6 +15,8 @@ from PIL import Image
 import re
 import metpy
 import numpy as np
+from shapely.geometry import Point, MultiPoint
+from geopandas import GeoSeries
 
 # later draw the box on top of the file
 fires = pd.read_excel(r'C:\Users\kzammit\Documents\Plumes\all-false-positives-manual-2023-09-23.xlsx')
@@ -24,14 +26,15 @@ fires = pd.read_excel(r'C:\Users\kzammit\Documents\Plumes\all-false-positives-ma
 # figure out what time 1:30 pm local is in UTC
 
 # coord is long, lat
-coord_1 = fires['bounds'][0].split(',')[0].split('(')[1]
-coord_2 = fires['bounds'][0].split(',')[1].split(' ')[1]
+fire_id = 2
+coord_1 = fires['bounds'][fire_id].split(',')[0].split('(')[1]
+coord_2 = fires['bounds'][fire_id].split(',')[1].split(' ')[1]
 
 # get UTC time for 1:00 pm local
 tf = TimezoneFinder()
 timezone = tf.timezone_at(lng=float(coord_1), lat=float(coord_2))
 local_tz = pytz.timezone(timezone)
-local_time = local_tz.localize(datetime(2023, 9, 23, 10, 0))  # 1 PM
+local_time = local_tz.localize(datetime(2023, 9, 23, 10, 0))
 utc_time = local_time.astimezone(pytz.UTC)
 
 print(f"Local Time: {local_time}")
@@ -109,7 +112,39 @@ for idx, file in enumerate(g.iterrows()):
         pc = ccrs.PlateCarree()
 
         ax = fig.add_subplot(1, 1, 1, projection=pc)
-        ax.set_extent([-114.75, -108.25, 36, 43], crs=pc)
+        # let's set the fire bounds instead of utah, I need to increase the size of the bounds though
+        # add 8 to each
+
+        bounds_orig = np.array(eval(fires['bounds'][fire_id]), dtype=float)
+        x_diff = bounds_orig[0] - bounds_orig[2]
+        y_diff = bounds_orig[1] - bounds_orig[3]
+        inc_by = 10
+
+        if x_diff<inc_by:
+            rem_x = (inc_by - x_diff)/2
+            x_min = bounds_orig[0] - rem_x
+            x_max = bounds_orig[2] + rem_x
+        else:
+            x_min = bounds_orig[0]
+            x_max = bounds_orig[2]
+
+        if y_diff < inc_by:
+            rem_y = (inc_by - y_diff) / 2
+            y_min = bounds_orig[1] - rem_y
+            y_max = bounds_orig[3] + rem_y
+        else:
+            y_min = bounds_orig[1]
+            y_max = bounds_orig[3]
+
+        extents = [x_min, x_max, y_min, y_max]
+
+        fps = fires['geometry'][fire_id]
+        fps_format = re.findall(r"\(\s*(-?\d+\.\d+)\s+(-?\d+\.\d+)\s*\)", fps)
+        fp_points = [[float(lon), float(lat)] for lon, lat in fps_format]
+        gs = GeoSeries(Point(pnt[0],pnt[1]) for pnt in fp_points)
+
+        #ax.set_extent([-114.75, -108.25, 36, 43], crs=pc)
+        ax.set_extent(extents, crs=pc)
 
         ax.imshow(RGB, origin='upper',
                   #extent=(x.min(), x.max(), y.min(), y.max()),
@@ -118,12 +153,11 @@ for idx, file in enumerate(g.iterrows()):
 
         ax.coastlines(resolution='50m', color='black', linewidth=1)
         ax.add_feature(ccrs.cartopy.feature.STATES)
+        gs.plot(ax=ax, marker='*', color='red', markersize=12, figsize=(4, 4))
 
         plt.title('GOES-16 True Color', loc='left', fontweight='bold', fontsize=15)
         #plt.title('{}'.format(scan_start.strftime('%d %B %Y %H:%M UTC ')), loc='right')
         plt.savefig(os.path.join(img_dir, 'projected-' + str(idx) + '.png'))
-
-        print('test')
 
 
 # make an animated gif
